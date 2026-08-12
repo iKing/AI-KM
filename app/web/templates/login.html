@@ -1,5 +1,4 @@
-{# -*- coding: utf-8 -*-}
-{# 登录页：独立布局，不继承带侧边栏的 base，登录后才有导航 #}
+{# -*- coding: utf-8 -*- #}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -9,54 +8,57 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body class="login-body">
-<div class="login-card">
-    <div class="login-logo">晓梦庄子 · AI-KM</div>
-    <div class="login-sub">企业知识资产 · 智能检索与问答平台</div>
+<div class="login-split">
+    <!-- 左侧：品牌价值主张 -->
+    <aside class="login-brand">
+        <div class="brand-mark">晓梦庄子 <span class="accent">· AI-KM</span></div>
+        <div class="brand-tag">面向医药采购 AI 公司的企业知识资产平台——把分散的政策、项目、客户、产品知识统一沉淀、混合检索、可信问答。</div>
+        <div class="brand-points">
+            <div class="brand-point">
+                <div class="ico">🔍</div>
+                <div><div class="t">混合检索</div><div class="d">BM25 + 向量 + RRF 融合，命中片段高亮、可溯源到原文。</div></div>
+            </div>
+            <div class="brand-point">
+                <div class="ico">💬</div>
+                <div><div class="t">可信问答</div><div class="d">基于库内资料作答，附可点击引用来源，资料不足如实告知、不编造。</div></div>
+            </div>
+            <div class="brand-point">
+                <div class="ico">📚</div>
+                <div><div class="t">资产化沉淀</div><div class="d">六大分类统一入库，权限精细到密级与部门，操作全程审计。</div></div>
+            </div>
+        </div>
+        <div class="brand-foot">晓梦庄子 · 为医药采购 AI 公司打造的知识中台</div>
+    </aside>
 
-    {# ---- 第一步：账号 + 密码 ---- #}
-    <form id="loginForm" class="login-form">
-        <label>账号
-            <input type="text" name="username" id="username" placeholder="请输入账号" autocomplete="username" required>
-        </label>
-        <label>密码
-            <input type="password" name="password" id="password" placeholder="请输入密码" autocomplete="current-password" required>
-        </label>
-        <div id="loginError" class="form-error"></div>
-        <button type="submit" class="btn btn-primary btn-block">登 录</button>
-    </form>
+    <!-- 右侧：登录卡片 -->
+    <main class="login-form-side">
+        <div class="login-card">
+            <div class="login-logo">欢迎回来</div>
+            <div class="login-sub">登录以继续使用知识管理平台</div>
 
-    {# ---- 第二步：MFA 动态码（仅当后端返回 mfa_required 时显示）---- #}
-    <form id="mfaForm" class="login-form" style="display:none">
-        <div class="login-sub">🔐 请输入验证器 App 上的 6 位动态码</div>
-        <label>动态码
-            <input type="text" id="mfaCode" placeholder="6 位动态码" maxlength="6" autocomplete="one-time-code">
-        </label>
-        <div id="mfaError" class="form-error"></div>
-        <button type="submit" class="btn btn-primary btn-block">验证并登录</button>
-    </form>
+            <form id="loginForm" class="login-form">
+                <label>账号
+                    <input type="text" name="username" id="username" placeholder="请输入账号" autocomplete="username" required>
+                </label>
+                <label>密码
+                    <input type="password" name="password" id="password" placeholder="请输入密码" autocomplete="current-password" required>
+                </label>
+                <div id="loginError" class="form-error"></div>
+                <button type="submit" class="btn btn-primary btn-block">登 录</button>
+            </form>
 
-    {# ---- 单点登录入口（SSO 开启时显示）---- #}
-    {% if sso_enabled %}
-    <div class="sso-divider"><span>或使用企业账号</span></div>
-    {% if sso_provider == 'ldap' %}
-    <form id="ldapForm" class="login-form">
-        <div class="login-sub">🔗 LDAP / AD 域账号登录</div>
-        <label>域账号
-            <input type="text" id="ldapUser" placeholder="LDAP 用户名" autocomplete="username">
-        </label>
-        <label>域密码
-            <input type="password" id="ldapPwd" placeholder="LDAP 密码" autocomplete="current-password">
-        </label>
-        <div id="ldapError" class="form-error"></div>
-        <button type="submit" class="btn btn-block">LDAP 登录</button>
-    </form>
-    {% elif sso_provider == 'oidc' %}
-    <button id="oidcBtn" class="btn btn-block">🔑 使用企业账号 (OIDC) 登录</button>
-    <div id="oidcError" class="form-error"></div>
-    {% endif %}
-    {% endif %}
+            <form id="mfaForm" class="login-form" style="display:none">
+                <div class="login-sub">🔐 请输入验证器 App 上的 6 位动态码</div>
+                <label>动态码
+                    <input type="text" id="mfaCode" placeholder="6 位动态码" maxlength="6" autocomplete="one-time-code">
+                </label>
+                <div id="mfaError" class="form-error"></div>
+                <button type="submit" class="btn btn-primary btn-block">验证并登录</button>
+            </form>
 
-    <div class="login-tip">默认管理员：admin / Admin@123456（首次登录需修改密码）</div>
+            <div class="login-tip">默认管理员：admin / Admin@123456（首次登录需修改密码）</div>
+        </div>
+    </main>
 </div>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 <script>
@@ -90,7 +92,7 @@
                 if (data.user && data.user.must_change_pwd) {
                     window.location.href = '/change-password';
                 } else {
-                    window.location.href = '/search';
+                    window.location.href = '/dashboard';  // 进入知识库工作台
                 }
             } else {
                 errBox.textContent = data.error || '登录失败';
@@ -114,12 +116,7 @@
             });
             const data = await resp.json();
             if (data.ok) {
-                // 二次验证通过：同样检查强制改密
-                if (data.user && data.user.must_change_pwd) {
-                    window.location.href = '/change-password';
-                } else {
-                    window.location.href = '/search';
-                }
+                window.location.href = data.user && data.user.must_change_pwd ? '/change-password' : '/dashboard';
             } else {
                 errBox.textContent = data.error || '验证失败';
             }
@@ -127,47 +124,6 @@
             errBox.textContent = '网络错误：' + ex.message;
         }
     });
-
-    // LDAP 登录
-    const ldapForm = document.getElementById('ldapForm');
-    if (ldapForm) {
-        ldapForm.addEventListener('submit', async function (e) {
-            e.preventDefault();
-            const errBox = document.getElementById('ldapError');
-            errBox.textContent = '';
-            try {
-                const resp = await fetch('/api/login/ldap', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        username: document.getElementById('ldapUser').value.trim(),
-                        password: document.getElementById('ldapPwd').value,
-                    }),
-                });
-                const data = await resp.json();
-                if (data.ok) { window.location.href = '/search'; }
-                else { errBox.textContent = data.error || 'LDAP 登录失败'; }
-            } catch (ex) { errBox.textContent = '网络错误：' + ex.message; }
-        });
-    }
-
-    // OIDC 登录：跳转到授权页
-    const oidcBtn = document.getElementById('oidcBtn');
-    if (oidcBtn) {
-        oidcBtn.addEventListener('click', async function () {
-            const errBox = document.getElementById('oidcError');
-            errBox.textContent = '';
-            try {
-                const resp = await fetch('/api/sso/oidc/authorize');  // 取授权页地址
-                const data = await resp.json();
-                if (data.ok && data.authorize_url) {
-                    window.location.href = data.authorize_url;  // 重定向到 IdP
-                } else {
-                    errBox.textContent = data.error || 'OIDC 未配置';
-                }
-            } catch (ex) { errBox.textContent = '网络错误：' + ex.message; }
-        });
-    }
 </script>
 </body>
 </html>

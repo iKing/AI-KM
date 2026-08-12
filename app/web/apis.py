@@ -524,6 +524,92 @@ def api_dashboard():
     })
 
 
+@bp.route("/api/home")
+@auth.login_required
+def api_home():
+    """
+    知识库首页（专业工作台）聚合接口：一次调用返回工作台所需的全部数据。
+
+    返回：六大一级分类及其可见文档数、最近更新文档、我的待办、
+    热门检索词、统计概览。前端据此渲染类 BookStack 的企业知识库工作台，
+    避免首页加载时发起多次请求（N+1）。
+    """
+    user = auth.current_user()
+    # 统一权限过滤条件（数据层隔离，无权限文档查不出）
+    where_sql, params = auth.visibility_filter(user, "d")
+
+    # ① 六大一级分类 + 各分类可见文档数（用于分类导航入口）
+    cat_rows = db.query(
+        f"SELECT d.category_l1 AS c, COUNT(*) AS cn FROM documents d WHERE {where_sql} GROUP BY d.category_l1",
+        params,
+    )
+    cat_counts = {r["c"]: r["cn"] for r in cat_rows}
+    # 分类图标映射（前端卡片展示用，与 CATEGORIES_L1 顺序对齐）
+    cat_icons = {
+        "POLICY": "📜", "PROJECT": "🗂️", "CUSTOMER": "🤝",
+        "PRODUCT": "⚙️", "PROCESS": "📋", "TRAINING": "🎓",
+    }
+    categories = [
+        {"key": k, "name": v, "icon": cat_icons.get(k, "📁"), "count": cat_counts.get(k, 0)}
+        for k, v in config.CATEGORIES_L1.items()
+    ]
+
+    # ② 最近更新：可见范围内已发布文档，按更新时间倒序取前 8
+    recent_rows = db.query(
+        f"""
+        SELECT d.id, d.title, d.category_l1, d.security_level, d.updated_at, d.summary,
+               COALESCE(u.display_name, '') AS owner_name
+        FROM documents d
+        LEFT JOIN users u ON u.id = d.created_by
+        WHERE {where_sql} AND d.status = 'published'
+        ORDER BY d.updated_at DESC
+        LIMIT 8
+        """,
+        params,
+    )
+
+    # ③ 我的待办：按角色与创建人聚合（审核类 / 我待处理 / 知识缺口）
+    todos = []
+    # 待我审核：审核员与管理员可见的待审文档
+    if user["role"] in ("admin", "reviewer"):
+        pending = db.query_one(
+            f"SELECT COUNT(*) AS c FROM documents d WHERE {where_sql} AND d.status='pending_review'",
+            params,
+        )["c"]
+        if pending:
+            todos.append({"type": "review", "title": "待我审核", "desc": "有新的知识文档等待审核发布", "count": pending, "url": "/review"})
+    # 我创建的待发布 / 被退回
+    my_pending = db.query_one(
+        "SELECT COUNT(*) AS c FROM documents WHERE created_by=? AND status IN ('pending_review','rejected')",
+        (user["id"],),
+    )["c"]
+    if my_pending:
+        todos.append({"type": "mine", "title": "我待处理", "desc": "我提交的文档待审核或被退回", "count": my_pending, "url": "/spaces"})
+    # 知识缺口：近期零结果检索词数量，提示补充知识
+    search_stats = search.engine.search_stats(days=30)
+    zero_cnt = len(search_stats.get("zero_queries", []) or [])
+    if zero_cnt:
+        todos.append({"type": "gap", "title": "知识缺口待补", "desc": "近期有检索零结果，建议补充知识", "count": zero_cnt, "url": "/search"})
+
+    # ④ 热门检索 Top8
+    hot = (search_stats.get("top_queries", []) or [])[:8]
+
+    # ⑤ 统计概览：文档总量 + 知识片段总量
+    stats = {
+        "doc_total": db.query_one("SELECT COUNT(*) AS c FROM documents")["c"],
+        "chunk_total": db.query_one("SELECT COUNT(*) AS c FROM chunks")["c"],
+    }
+
+    return jsonify({
+        "ok": True,
+        "categories": categories,
+        "recent": db.rows_to_dicts(recent_rows),
+        "todos": todos,
+        "hot_queries": hot,
+        "stats": stats,
+    })
+
+
 # ============================================================
 # 八、管理后台接口（仅管理员）
 # ============================================================
