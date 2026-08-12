@@ -4,6 +4,11 @@
 把分散的政策、项目、客户、产品、制度、培训知识统一入库、混合检索、可信问答，
 支撑公司 SG1（知识资产化）与 SG2（AI 生产力重构）战略落地。
 
+> **当前版本 v1.0.0**（2026-08-12 基线）：完整功能 + 文档 + 测试（183/183 验证通过），可生产级替代 BookStack。
+> 内部专有资产，请勿外传。
+
+![version](https://img.shields.io/badge/version-v1.0.0-blue) ![status](https://img.shields.io/badge/status-生产可用-brightgreen) ![scope](https://img.shields.io/badge/scope-内部专有-red)
+
 ---
 
 ## 一、八个"可"对照
