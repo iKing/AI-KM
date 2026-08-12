@@ -1,0 +1,3 @@
+﻿filename,title,category_l1,category_l2,department_id,security_level,quality_level,owner,effective_date,expire_date,source,summary
+示例文件.docx,2025国家高值医用耗材集采政策解读,POLICY,POLICY-NATIONAL,1,internal,normal,张科室,2025-01-01,2026-01-01,国家医保局,解读集采政策对医院采购的影响
+,某省招标流程规范,PROJECT,PROJECT-BID,1,internal,normal,李项目,2025-03-01,,公司内网,项目投标流程说明

@@ -1,0 +1,99 @@
+{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+{% block title %}我的安全 · MFA 多因子认证{% endblock %}
+{% block page_title %}我的安全 · MFA{% endblock %}
+{% block content %}
+<div class="mfa-wrap">
+    <h2>🔐 多因子认证（MFA）</h2>
+    <p class="muted">开启后，登录除密码外还需输入 authenticator App 上的 6 位动态码，账号更安全。</p>
+
+    {% if not mfa_global %}
+    <div class="mfa-banner warn">系统当前未启用 MFA（AIKM_MFA_ENABLED=false），无法开启。</div>
+    {% else %}
+    <div id="mfaStatus" class="mfa-banner">正在读取当前状态…</div>
+
+    {# 未开启：展示「开通」流程 #}
+    <div id="setupFlow" style="display:none">
+        <button id="startBtn" class="btn btn-primary">开始开通 MFA</button>
+        <div id="step2" style="display:none; margin-top:16px">
+            <p>① 用 <b>Google Authenticator / 微软验证器 / 1Password</b> 等 App 扫描下方二维码：</p>
+            <div id="qrBox" class="qr-box"></div>
+            <p>② 或手动添加密钥：<code id="secretText"></code></p>
+            <p>③ 输入 App 上当前的 6 位动态码完成绑定：</p>
+            <input id="codeInput" class="tag-input" placeholder="6 位动态码" maxlength="6" />
+            <button id="confirmBtn" class="btn btn-primary">确认开启</button>
+            <div id="backupBox" class="backup-box" style="display:none">
+                <p class="warn">✅ 已开启！请<strong>立即抄存以下备用码</strong>（手机丢失时用于紧急登录，用一次少一个）：</p>
+                <pre id="backupCodes"></pre>
+            </div>
+        </div>
+    </div>
+
+    {# 已开启：展示「关闭」 #}
+    <div id="disableFlow" style="display:none; margin-top:16px">
+        <div class="mfa-banner ok">✅ 您已开启 MFA（剩余备用码 <span id="backupCount">0</span> 个）</div>
+        <p>关闭 MFA 需验证登录密码：</p>
+        <input id="pwdInput" class="tag-input" type="password" placeholder="登录密码" />
+        <button id="disableBtn" class="btn btn-sm">关闭 MFA</button>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+// MFA 开通/关闭的交互逻辑（纯前端，调用 /api/mfa/* 接口）
+const $ = (id) => document.getElementById(id);  // 简化 getElementById
+
+// 读取状态：决定展示开通流程还是关闭流程
+async function loadStatus() {
+    const r = await fetch("/api/mfa/status");  // 取状态
+    const d = await r.json();
+    if (!d.ok) return;
+    $("mfaStatus").style.display = "none";  // 状态读出后隐藏占位
+    if (d.enabled) {  // 已开启
+        $("disableFlow").style.display = "block";
+        $("backupCount").textContent = d.backup_count || 0;
+    } else {  // 未开启
+        $("setupFlow").style.display = "block";
+    }
+}
+
+// 开始开通：请求密钥 + 二维码
+$("startBtn") && $("startBtn").addEventListener("click", async () => {
+    const r = await fetch("/api/mfa/setup", {method: "POST"});  // 生成密钥
+    const d = await r.json();
+    if (!d.ok) { alert(d.error || "开通失败"); return; }
+    $("step2").style.display = "block";  // 展示扫码步骤
+    $("qrBox").innerHTML = d.qr_svg;       // 内联 SVG 二维码
+    $("secretText").textContent = d.secret;  // 展示手动添加密钥
+});
+
+// 确认开启：校验动态码
+$("confirmBtn") && $("confirmBtn").addEventListener("click", async () => {
+    const code = ($("codeInput").value || "").trim();  // 用户输入的动态码
+    const r = await fetch("/api/mfa/confirm", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({code}),  // 提交动态码
+    });
+    const d = await r.json();
+    if (!d.ok) { alert(d.error || "验证失败"); return; }
+    $("backupBox").style.display = "block";  // 展示备用码
+    $("backupCodes").textContent = (d.backup_codes || []).join("\n");  // 抄存
+});
+
+// 关闭 MFA：校验密码后关闭
+$("disableBtn") && $("disableBtn").addEventListener("click", async () => {
+    const pwd = ($("pwdInput").value || "").trim();  // 登录密码
+    const r = await fetch("/api/mfa/disable", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({password: pwd}),
+    });
+    const d = await r.json();
+    alert(d.ok ? "已关闭 MFA" : (d.error || "关闭失败"));
+    if (d.ok) location.reload();  // 成功后刷新状态
+});
+
+loadStatus();  // 页面加载即读状态
+</script>
+{% endblock %}

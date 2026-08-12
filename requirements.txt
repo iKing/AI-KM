@@ -1,0 +1,28 @@
+# AI-KM 知识管理平台 · Python 依赖
+# 本清单为"已验证可用"的版本集合（均在受管 venv 中实测通过）。
+# 生产镜像 Dockerfile 直接据此安装，保证"本地验证 == 线上运行"。
+
+# --- Web 框架 ---
+Flask==3.1.3            # Web 框架
+Werkzeug==3.1.8         # Flask 底层 WSGI 工具（版本须与 Flask 匹配）
+gunicorn==23.0.0        # 生产级 WSGI 服务器（替代 Flask 开发服务器，性能与稳定性达标）
+
+# --- 中文检索与向量 ---
+jieba==0.42.1           # 中文分词（BM25 检索前置）
+numpy==2.5.2            # 向量余弦相似度加速（无则用纯 Python 降级）
+
+# --- 文档解析 ---
+python-docx==1.2.0      # 解析/生成 .docx（文档导出用）
+pypdf==6.15.0           # 解析 .pdf
+openpyxl==3.1.5         # 解析 .xlsx
+beautifulsoup4==4.15.0  # 解析 .html（富文本导出转换用）
+Pillow==12.3.0          # 图片读写（Docx/PDF 导出内嵌图片用）
+reportlab==5.0.0        # 服务端生成 PDF（无需浏览器，离线可用）
+
+# --- 模型 HTTP 调用 ---
+requests==2.34.2        # 调用 LLM / 向量 / OIDC 等外部 HTTP API
+
+# --- P2 安全增强依赖 ---
+pyotp==2.10.0           # MFA 多因子认证（TOTP 算法，模块加载期硬依赖，必须安装）
+qrcode==8.2             # MFA 开通二维码生成（SVG 内联，模块加载期硬依赖，必须安装）
+ldap3==2.9.1            # SSO/LDAP 单点登录（懒加载，缺则 LDAP 功能降级但应用照常启动）

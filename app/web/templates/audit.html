@@ -1,0 +1,100 @@
+{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+{% block title %}审计日志 · AI-KM{% endblock %}
+{% block page_title %}审计日志{% endblock %}
+{% block content %}
+<div class="toolbar">
+    <select id="fAction" class="select">
+        <option value="">全部动作</option>
+        {% for code, name in audit.ACTIONS.items() %}
+        <option value="{{ code }}">{{ name }}</option>
+        {% endfor %}
+    </select>
+    <input type="text" id="fKeyword" class="search-input" placeholder="关键词（动作/对象/详情）" style="flex:1">
+    <input type="date" id="fFrom" class="select" title="起始日期">
+    <input type="date" id="fTo" class="select" title="截止日期">
+    <label class="chk"><input type="checkbox" id="fSens"> 仅机密</label>
+    <button class="btn btn-primary" onclick="loadAudit()">查询</button>
+    <a class="btn btn-ghost btn-sm" id="exportBtn" href="#">导出CSV</a>
+</div>
+
+<div class="tbl-wrap">
+    <table class="tbl" id="auditTable">
+        <thead><tr>
+            <th>时间</th><th>用户</th><th>动作</th><th>对象</th><th>详情</th><th>结果</th><th>IP</th>
+        </tr></thead>
+        <tbody></tbody>
+    </table>
+</div>
+<div id="auditMsg" class="muted"></div>
+
+<style>
+/* 审计页专属小样式 */
+.chk { display: inline-flex; align-items: center; gap: 4px; color: var(--text-2); font-size: 13px; }
+.tbl-wrap { margin-top: 14px; overflow: auto; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tbl th, .tbl td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+.tbl th { background: var(--bg-3); position: sticky; top: 0; }
+.tbl tbody tr:nth-child(even) { background: rgba(255,255,255,.02); }
+.ok-tag { color: var(--ok); }
+.fail-tag { color: var(--err); }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 组装查询参数（与 /api/admin/audit 接口对齐）
+function buildParams() {
+    const p = new URLSearchParams();
+    const a = document.getElementById('fAction').value;
+    const k = document.getElementById('fKeyword').value.trim();
+    const f = document.getElementById('fFrom').value;
+    const t = document.getElementById('fTo').value;
+    if (a) p.set('action', a);
+    if (k) p.set('keyword', k);
+    if (f) p.set('date_from', f);
+    if (t) p.set('date_to', t);
+    if (document.getElementById('fSens').checked) p.set('sensitive', '1');
+    p.set('limit', '200');
+    return p;
+}
+
+// 加载并渲染审计日志
+async function loadAudit() {
+    const params = buildParams();
+    document.getElementById('exportBtn').href = '/api/admin/audit/export?' + params.toString();  // 导出沿用当前筛选
+    const msg = document.getElementById('auditMsg');
+    msg.textContent = '查询中…';
+    try {
+        const resp = await fetch('/api/admin/audit?' + params.toString());
+        const data = await resp.json();
+        if (!data.ok) { msg.textContent = '查询失败'; return; }
+        const tb = document.querySelector('#auditTable tbody');
+        if (!data.logs.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">无记录</td></tr>'; msg.textContent = '共 0 条'; return; }
+        tb.innerHTML = data.logs.map(r => `
+            <tr>
+                <td>${r.ts || ''}</td>
+                <td>${r.username || '—'}</td>
+                <td>${r.action_name || r.action}</td>
+                <td>${r.target_type || ''}#${r.target_id || ''}</td>
+                <td style="max-width:380px;word-break:break-word">${escapeHtml(r.detail || '')}</td>
+                <td class="${r.result === 'success' ? 'ok-tag' : (r.result === 'fail' ? 'fail-tag' : '')}">${r.result || ''}</td>
+                <td>${r.ip || ''}</td>
+            </tr>
+        `).join('');
+        msg.textContent = `共 ${data.total} 条，显示前 ${data.logs.length} 条`;
+    } catch (e) {
+        msg.textContent = '网络错误：' + e.message;
+    }
+}
+
+// 转义 HTML，防止详情字段破坏表格结构
+function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, c => (
+        {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]
+    ));
+}
+
+loadAudit();  // 页面加载即查询
+</script>
+{% endblock %}

@@ -1,0 +1,173 @@
+{# -*- coding: utf-8 -*-}
+{# 登录页：独立布局，不继承带侧边栏的 base，登录后才有导航 #}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>登录 · AI-KM 知识管理平台</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="login-body">
+<div class="login-card">
+    <div class="login-logo">晓梦庄子 · AI-KM</div>
+    <div class="login-sub">企业知识资产 · 智能检索与问答平台</div>
+
+    {# ---- 第一步：账号 + 密码 ---- #}
+    <form id="loginForm" class="login-form">
+        <label>账号
+            <input type="text" name="username" id="username" placeholder="请输入账号" autocomplete="username" required>
+        </label>
+        <label>密码
+            <input type="password" name="password" id="password" placeholder="请输入密码" autocomplete="current-password" required>
+        </label>
+        <div id="loginError" class="form-error"></div>
+        <button type="submit" class="btn btn-primary btn-block">登 录</button>
+    </form>
+
+    {# ---- 第二步：MFA 动态码（仅当后端返回 mfa_required 时显示）---- #}
+    <form id="mfaForm" class="login-form" style="display:none">
+        <div class="login-sub">🔐 请输入验证器 App 上的 6 位动态码</div>
+        <label>动态码
+            <input type="text" id="mfaCode" placeholder="6 位动态码" maxlength="6" autocomplete="one-time-code">
+        </label>
+        <div id="mfaError" class="form-error"></div>
+        <button type="submit" class="btn btn-primary btn-block">验证并登录</button>
+    </form>
+
+    {# ---- 单点登录入口（SSO 开启时显示）---- #}
+    {% if sso_enabled %}
+    <div class="sso-divider"><span>或使用企业账号</span></div>
+    {% if sso_provider == 'ldap' %}
+    <form id="ldapForm" class="login-form">
+        <div class="login-sub">🔗 LDAP / AD 域账号登录</div>
+        <label>域账号
+            <input type="text" id="ldapUser" placeholder="LDAP 用户名" autocomplete="username">
+        </label>
+        <label>域密码
+            <input type="password" id="ldapPwd" placeholder="LDAP 密码" autocomplete="current-password">
+        </label>
+        <div id="ldapError" class="form-error"></div>
+        <button type="submit" class="btn btn-block">LDAP 登录</button>
+    </form>
+    {% elif sso_provider == 'oidc' %}
+    <button id="oidcBtn" class="btn btn-block">🔑 使用企业账号 (OIDC) 登录</button>
+    <div id="oidcError" class="form-error"></div>
+    {% endif %}
+    {% endif %}
+
+    <div class="login-tip">默认管理员：admin / Admin@123456（首次登录需修改密码）</div>
+</div>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+<script>
+    // 显示后端回传的错误（如 OIDC 回调带 error 参数）
+    const params = new URLSearchParams(location.search);  // 解析查询串
+    if (params.get("error")) {
+        const box = document.getElementById("loginError");
+        if (box) box.textContent = params.get("error");  // 展示错误信息
+    }
+
+    // 第一步：账号密码登录
+    document.getElementById('loginForm').addEventListener('submit', async function (e) {
+        e.preventDefault();  // 阻止默认提交
+        const errBox = document.getElementById('loginError');
+        errBox.textContent = '';
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value;
+        try {
+            const resp = await fetch('/api/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username, password}),
+            });
+            const data = await resp.json();
+            if (data.ok && data.mfa_required) {
+                // 开启 MFA：切到第二步动态码输入
+                document.getElementById('loginForm').style.display = 'none';
+                document.getElementById('mfaForm').style.display = 'block';
+            } else if (data.ok) {
+                // 登录成功：若处于强制改密状态，先去改密码；否则进检索页
+                if (data.user && data.user.must_change_pwd) {
+                    window.location.href = '/change-password';
+                } else {
+                    window.location.href = '/search';
+                }
+            } else {
+                errBox.textContent = data.error || '登录失败';
+            }
+        } catch (ex) {
+            errBox.textContent = '网络错误：' + ex.message;
+        }
+    });
+
+    // 第二步：MFA 动态码验证
+    document.getElementById('mfaForm').addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const errBox = document.getElementById('mfaError');
+        errBox.textContent = '';
+        const code = document.getElementById('mfaCode').value.trim();
+        try {
+            const resp = await fetch('/api/login/mfa', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({code}),
+            });
+            const data = await resp.json();
+            if (data.ok) {
+                // 二次验证通过：同样检查强制改密
+                if (data.user && data.user.must_change_pwd) {
+                    window.location.href = '/change-password';
+                } else {
+                    window.location.href = '/search';
+                }
+            } else {
+                errBox.textContent = data.error || '验证失败';
+            }
+        } catch (ex) {
+            errBox.textContent = '网络错误：' + ex.message;
+        }
+    });
+
+    // LDAP 登录
+    const ldapForm = document.getElementById('ldapForm');
+    if (ldapForm) {
+        ldapForm.addEventListener('submit', async function (e) {
+            e.preventDefault();
+            const errBox = document.getElementById('ldapError');
+            errBox.textContent = '';
+            try {
+                const resp = await fetch('/api/login/ldap', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        username: document.getElementById('ldapUser').value.trim(),
+                        password: document.getElementById('ldapPwd').value,
+                    }),
+                });
+                const data = await resp.json();
+                if (data.ok) { window.location.href = '/search'; }
+                else { errBox.textContent = data.error || 'LDAP 登录失败'; }
+            } catch (ex) { errBox.textContent = '网络错误：' + ex.message; }
+        });
+    }
+
+    // OIDC 登录：跳转到授权页
+    const oidcBtn = document.getElementById('oidcBtn');
+    if (oidcBtn) {
+        oidcBtn.addEventListener('click', async function () {
+            const errBox = document.getElementById('oidcError');
+            errBox.textContent = '';
+            try {
+                const resp = await fetch('/api/sso/oidc/authorize');  // 取授权页地址
+                const data = await resp.json();
+                if (data.ok && data.authorize_url) {
+                    window.location.href = data.authorize_url;  // 重定向到 IdP
+                } else {
+                    errBox.textContent = data.error || 'OIDC 未配置';
+                }
+            } catch (ex) { errBox.textContent = '网络错误：' + ex.message; }
+        });
+    }
+</script>
+</body>
+</html>

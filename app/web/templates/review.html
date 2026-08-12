@@ -1,0 +1,103 @@
+{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+{% block title %}知识审核 · AI-KM{% endblock %}
+{% block page_title %}知识审核{% endblock %}
+{% block content %}
+<div class="toolbar">
+    <span class="tab active" data-status="pending_review" onclick="switchTab(this)">待审核</span>
+    <span class="tab" data-status="rejected" onclick="switchTab(this)">已退回</span>
+    <span class="tab" data-status="published" onclick="switchTab(this)">已发布</span>
+    <input type="text" id="reviewKeyword" class="search-input" placeholder="按标题搜索" oninput="loadDocs()">
+</div>
+<div id="reviewList" class="review-list"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentStatus = 'pending_review';  // 当前筛选状态
+
+// 切换状态标签
+function switchTab(el) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    currentStatus = el.dataset.status;
+    loadDocs();
+}
+
+// 加载文档列表（按状态 + 关键词）
+async function loadDocs() {
+    const el = document.getElementById('reviewList');
+    const kw = document.getElementById('reviewKeyword').value.trim();
+    const params = new URLSearchParams({status: currentStatus, per_page: 50});
+    if (kw) params.set('keyword', kw);
+    try {
+        const r = await fetch('/api/documents?' + params.toString());
+        const d = await r.json();
+        if (!d.ok) { el.innerHTML = '<div class="empty">加载失败</div>'; return; }
+        if (!d.items.length) { el.innerHTML = '<div class="empty">暂无' + currentStatus + '文档</div>'; return; }
+        el.innerHTML = d.items.map(doc => renderDoc(doc)).join('');
+    } catch (e) { el.innerHTML = '<div class="empty">网络错误：' + e.message + '</div>'; }
+}
+
+// 渲染单条待审文档
+function renderDoc(doc) {
+    const isPending = doc.status === 'pending_review';
+    return `
+    <div class="review-card" id="doc-${doc.id}">
+        <div class="result-head">
+            <a class="result-title" href="/doc/${doc.id}">${escapeHtml(doc.title)}</a>
+            <span class="badge badge-${doc.security_level}">${doc.security_name}</span>
+            <span class="badge">${doc.category_name}</span>
+        </div>
+        <div class="result-meta">${doc.dept_name} · 责任人 ${doc.owner || '—'} · ${doc.chunk_count} 片段 · ${doc.content_length} 字</div>
+        <div class="result-body">${escapeHtml((doc.summary || '').slice(0, 200))}</div>
+        ${doc.reject_reason ? `<div class="reject-reason">退回原因：${escapeHtml(doc.reject_reason)}</div>` : ''}
+        ${isPending ? `
+        <div class="review-actions">
+            <button class="btn btn-primary btn-sm" onclick="approve(${doc.id})">通过发布</button>
+            <button class="btn btn-danger btn-sm" onclick="showReject(${doc.id})">退回</button>
+        </div>
+        <div class="reject-box" id="reject-${doc.id}" style="display:none">
+            <input type="text" id="reason-${doc.id}" placeholder="退回原因（可选）">
+            <button class="btn btn-danger btn-sm" onclick="reject(${doc.id})">确认退回</button>
+        </div>` : ''}
+    </div>`;
+}
+
+// 显示退回输入框
+function showReject(id) {
+    document.getElementById('reject-' + id).style.display = 'block';
+}
+
+// 通过
+async function approve(id) {
+    await postReview(id, 'approve', '');
+}
+
+// 退回
+async function reject(id) {
+    const reason = document.getElementById('reason-' + id).value.trim();
+    await postReview(id, 'reject', reason);
+}
+
+// 提交审核动作
+async function postReview(id, action, reason) {
+    try {
+        const r = await fetch('/api/review/' + id, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action, reason}),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            document.getElementById('doc-' + id).remove();  // 从列表移除
+            loadDocs();
+        } else {
+            alert(d.error || '操作失败');
+        }
+    } catch (e) { alert('网络错误：' + e.message); }
+}
+
+loadDocs();
+</script>
+{% endblock %}

@@ -1,0 +1,12 @@
+{# -*- coding: utf-8 -*-}
+{# 通用错误页：被页面路由以 404 等状态码渲染时使用 #}
+{% extends "base.html" %}
+{% block title %}出错了 · AI-KM{% endblock %}
+{% block page_title %}错误{% endblock %}
+{% block content %}
+<div class="error-page">
+    <div class="error-code">{{ code or 500 }}</div>
+    <div class="error-msg">{{ message or '发生未知错误' }}</div>
+    <a class="btn btn-primary" href="/search">返回检索</a>
+</div>
+{% endblock %}

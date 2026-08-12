@@ -1,0 +1,451 @@
+{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+{% block title %}编辑 · {{ doc_title }} · AI-KM{% endblock %}
+{% block page_title %}在线编辑（富文本）{% endblock %}
+{% block content %}
+<div class="editor-wrap">
+    <!-- 左栏：正文编辑器 -->
+    <div class="editor-main">
+        <div id="lockBanner" class="lock-banner" style="display:none"></div>
+        <div class="editor-bar">
+            <a class="btn btn-ghost btn-sm" href="/doc/{{ doc_id }}">← 返回文档</a>
+            <span class="muted">编辑即生成新版本，旧版本可在右侧历史中回滚</span>
+        </div>
+        <div class="form-row">
+            <label>标题</label>
+            <input type="text" id="fTitle" placeholder="文档标题" {% if not can_edit %}readonly{% endif %}>
+        </div>
+        <div class="form-row">
+            <label>正文（富文本：支持加粗/标题/列表/链接/图片，图片可直接粘贴或拖拽）</label>
+            <!-- Quill 富文本容器：替换原本的纯文本框，提供所见即所得编辑体验 -->
+            <div id="editorHost" class="quill-host">
+                <div id="editor"></div>
+            </div>
+        </div>
+        <div class="form-row two">
+            <div>
+                <label>变更说明（写入版本记录）</label>
+                <input type="text" id="fNote" placeholder="如：补充第三章报价规则" {% if not can_edit %}readonly{% endif %}>
+            </div>
+        </div>
+        <div class="form-row">
+            <label>摘要（留空则自动生成）</label>
+            <textarea id="fSummary" rows="2" {% if not can_edit %}readonly{% endif %}></textarea>
+        </div>
+        <div class="form-row">
+            <label>标签（回车添加，便于检索与归类）</label>
+            <div id="edTagList" class="tag-list"></div>
+            {% if can_edit %}
+            <span class="tag-add">
+                <input id="edTagInput" class="tag-input" placeholder="添加标签后回车" maxlength="50">
+                <button class="btn btn-sm" onclick="edAddTag()">+ 添加</button>
+            </span>
+            {% endif %}
+        </div>
+        <div class="editor-actions">
+            <span id="editMsg" class="upload-msg"></span>
+            {% if can_edit %}
+            <button class="btn btn-primary" id="saveBtn" onclick="saveDoc()">保存为新版本</button>
+            {% else %}
+            <span class="muted">（您没有编辑权限，仅可查看版本历史）</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 右栏：版本历史 -->
+    <div class="editor-side">
+        <h3>版本历史</h3>
+        <div id="verList" class="ver-list"><div class="empty">加载中…</div></div>
+    </div>
+</div>
+
+<!-- 版本查看 / 对比 模态框 -->
+<dialog id="verDlg" class="dialog ver-dialog">
+    <div class="dialog-form">
+        <h3 id="verDlgTitle">版本详情</h3>
+        <div id="verMeta" class="muted" style="margin-bottom:10px"></div>
+        <pre id="verContent" class="ver-pre"></pre>
+        <div class="dialog-actions">
+            <button class="btn btn-sm" onclick="diffWithCurrent()">与当前版本对比</button>
+            <button class="btn btn-sm" onclick="verDlg.close()">关闭</button>
+        </div>
+    </div>
+</dialog>
+{% endblock %}
+
+{% block styles %}
+{# 引入本地 Quill 雪主题样式（内网离线可用，无公网依赖） #}
+<link rel="stylesheet" href="/static/vendor/quill/quill.snow.css">
+{% endblock %}
+
+{% block scripts %}
+{# 引入本地 Quill 富文本编辑器脚本 #}
+<script src="/static/vendor/quill/quill.min.js"></script>
+<script>
+const DOC_ID = {{ doc_id }};          // 当前文档 ID，服务端注入
+let CAN_EDIT = {{ 'true' if can_edit else 'false' }};  // 是否有编辑权限（拿到锁前可能被降级为只读）
+const verDlg = document.getElementById('verDlg');  // 版本查看模态框
+let currentBody = '';   // 当前正文纯文本（用于 diff 基准）
+let viewContent = '';   // 正在查看的版本正文
+
+// 初始化 Quill 富文本编辑器（雪主题，工具栏含图片按钮）
+const quill = new Quill('#editor', {
+    theme: 'snow',
+    placeholder: '在此撰写正文，支持加粗、标题、列表、引用、代码块、链接与图片…',
+    modules: {
+        toolbar: {
+            container: [
+                [{header: [1, 2, 3, false]}],               // 标题层级
+                ['bold', 'italic', 'underline', 'strike'],  // 基础格式
+                [{list: 'ordered'}, {list: 'bullet'}],      // 有序/无序列表
+                ['blockquote', 'code-block'],               // 引用 / 代码块
+                ['link', 'image'],                          // 链接 / 图片
+                ['clean']                                   // 清除格式
+            ],
+            handlers: { image: imageHandler }               // 覆盖默认图片按钮：改为上传到服务器
+        }
+    }
+});
+if (!CAN_EDIT) quill.disable();  // 无编辑权限时禁用编辑器
+
+// 页面加载：拉取当前正文（优先富文本 HTML）+ 版本列表 + 标签
+loadDoc();
+loadVersions();
+loadTags();
+// 有编辑权限时尝试获取并发编辑锁（防多人同时编辑互相覆盖）
+if (CAN_EDIT) acquireLock();
+
+// 工具栏「图片」按钮：弹出文件选择框，选中后上传并插入
+function imageHandler() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = () => {
+        const file = input.files[0];
+        if (file) uploadImageAndInsert(file);
+    };
+    input.click();
+}
+
+// 把图片文件上传到后端，成功后插入到编辑器光标处
+async function uploadImageAndInsert(file) {
+    const fd = new FormData();
+    fd.append('image', file);
+    try {
+        const resp = await fetch('/api/documents/' + DOC_ID + '/images', {method: 'POST', body: fd});
+        const data = await resp.json();
+        if (data.ok) {
+            const range = quill.getSelection(true);              // 获取光标位置
+            quill.insertEmbed(range.index, 'image', data.url);   // 插入图片
+            quill.setSelection(range.index + 1);                // 光标移到图片后
+        } else {
+            alert(data.error || '图片上传失败');
+        }
+    } catch (e) {
+        alert('图片上传失败：' + e);
+    }
+}
+
+// 粘贴图片：拦截 clipboard 中的图片，上传后内联（避免 base64 撑大数据库）
+quill.root.addEventListener('paste', (e) => {
+    const items = (e.clipboardData || window.clipboardData).items || [];
+    for (const it of items) {
+        if (it.type && it.type.startsWith('image/')) {
+            e.preventDefault();
+            const file = it.getAsFile();
+            if (file) uploadImageAndInsert(file);
+            return;
+        }
+    }
+});
+
+// 拖拽图片：把文件拖入编辑器即上传内联
+quill.root.addEventListener('drop', (e) => {
+    const files = (e.dataTransfer && e.dataTransfer.files) || [];
+    for (const file of files) {
+        if (file.type && file.type.startsWith('image/')) {
+            e.preventDefault();
+            uploadImageAndInsert(file);
+            return;
+        }
+    }
+});
+
+// 拉取并渲染文档标签（只读/可编辑由 CAN_EDIT 决定）
+async function loadTags() {
+    const resp = await fetch('/api/documents/' + DOC_ID + '/tags');
+    const data = await resp.json();
+    const el = document.getElementById('edTagList');
+    if (!data.ok) { el.innerHTML = ''; return; }
+    el.innerHTML = data.tags.map(t =>
+        `<span class="tag-chip" data-tag="${escapeHtml(t.name)}">${escapeHtml(t.name)}` +
+        (CAN_EDIT ? `<button class="tag-x" data-tag="${escapeHtml(t.name)}" title="移除">×</button>` : '') +
+        `</span>`
+    ).join('') || '<span class="tag-empty">暂无标签</span>';
+}
+
+// 把当前标签芯片名收集成数组，整体 PUT 给后端
+async function edSaveTags() {
+    if (!CAN_EDIT) return;
+    const names = Array.from(document.querySelectorAll('#edTagList .tag-chip')).map(el => el.dataset.tag);
+    await fetch('/api/documents/' + DOC_ID + '/tags', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tags: names}),
+    });
+}
+
+// 添加一个标签：本地渲染芯片后保存
+function edAddTag() {
+    const inp = document.getElementById('edTagInput');
+    const name = (inp.value || '').trim();
+    if (!name) return;
+    const exists = Array.from(document.querySelectorAll('#edTagList .tag-chip')).some(el => el.dataset.tag === name);
+    if (exists) { inp.value = ''; return; }
+    const chip = document.createElement('span');
+    chip.className = 'tag-chip';
+    chip.dataset.tag = name;
+    chip.innerHTML = name + '<button class="tag-x" data-tag="' + name + '" title="移除">×</button>';
+    const empty = document.querySelector('#edTagList .tag-empty');
+    if (empty) empty.remove();
+    document.getElementById('edTagList').appendChild(chip);
+    inp.value = '';
+    edSaveTags();
+}
+
+// 移除标签：点击 × 删除芯片并保存
+document.getElementById('edTagList').addEventListener('click', e => {
+    if (e.target.classList.contains('tag-x')) {
+        e.target.parentElement.remove();
+        if (document.getElementById('edTagList').children.length === 0) {
+            document.getElementById('edTagList').innerHTML = '<span class="tag-empty">暂无标签</span>';
+        }
+        edSaveTags();
+    }
+});
+document.getElementById('edTagInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); edAddTag(); }
+});
+
+// 拉取文档当前正文并填充富文本编辑器
+async function loadDoc() {
+    const resp = await fetch('/api/documents/' + DOC_ID + '/raw');
+    const data = await resp.json();
+    if (!data.ok) { document.getElementById('editMsg').textContent = data.error; return; }
+    const d = data.doc;
+    document.getElementById('fTitle').value = d.title || '';
+    // 优先用富文本 HTML 回显；没有则退回纯文本（老库/Markdown 文档）
+    if (d.body_html && d.body_html.trim()) {
+        quill.clipboard.dangerouslyPasteHTML(d.body_html);  // 把历史富文本灌回编辑器
+    } else {
+        quill.setText(d.body_text || '');                   // 纯文本灌入
+    }
+    document.getElementById('fSummary').value = d.summary || '';
+    currentBody = d.body_text || '';  // 记录基准正文（用于版本 diff）
+}
+
+// 保存编辑：写回富文本 HTML 并产生新版本
+async function saveDoc() {
+    const title = document.getElementById('fTitle').value.trim();
+    const html = quill.root.innerHTML;          // Quill 产出的 HTML
+    const note = document.getElementById('fNote').value.trim();
+    const summary = document.getElementById('fSummary').value.trim();
+    const msg = document.getElementById('editMsg');
+    // 正文为空（只有空段落或纯空白）时拒绝
+    if (!quill.getText().trim()) { msg.textContent = '正文不能为空'; msg.className = 'upload-msg err'; return; }
+    msg.textContent = '保存中…'; msg.className = 'upload-msg';
+    const resp = await fetch('/api/documents/' + DOC_ID + '/edit', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({title, html: html, change_note: note, summary: summary || null}),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+        msg.textContent = data.message + '（v' + data.version + '）';
+        msg.className = 'upload-msg ok';
+        releaseLock();   // 保存成功：主动释放编辑锁，避免长期占用
+        // 重新拉取最新正文作为 diff 基准
+        const r2 = await fetch('/api/documents/' + DOC_ID + '/raw');
+        const d2 = await r2.json();
+        if (d2.ok) currentBody = d2.doc.body_text || '';
+        loadVersions();      // 刷新版本历史
+    } else {
+        msg.textContent = data.error || data.message || '保存失败';
+        msg.className = 'upload-msg err';
+    }
+}
+
+// 拉取并渲染版本历史列表
+async function loadVersions() {
+    const resp = await fetch('/api/documents/' + DOC_ID + '/versions');
+    const data = await resp.json();
+    const el = document.getElementById('verList');
+    if (!data.ok) { el.innerHTML = '<div class="empty">加载失败</div>'; return; }
+    const current = data.current;
+    let html = `<div class="ver-item ver-current">
+        <div class="ver-head">当前版本 v${current.version}</div>
+        <div class="ver-sub">${current.content_length} 字 · 更新于 ${current.updated_at || '—'}</div>
+    </div>`;
+    for (const v of data.versions) {
+        html += `<div class="ver-item">
+            <div class="ver-head">v${v.version} <span class="muted">${escapeHtml(v.title || '')}</span></div>
+            <div class="ver-sub">${escapeHtml(v.change_note || '（无说明）')} · ${v.changed_by_name || '—'} · ${v.created_at}</div>
+            <div class="ver-actions">
+                <a href="javascript:void(0)" onclick="viewVersion(${v.id})">查看</a>
+                ${CAN_EDIT ? `<a href="javascript:void(0)" class="danger" onclick="doRollback(${v.id})">回滚到此版</a>` : ''}
+            </div>
+        </div>`;
+    }
+    el.innerHTML = html || '<div class="empty">暂无历史版本</div>';
+}
+
+// 查看某版本内容（打开模态框，展示纯文本快照用于对比）
+async function viewVersion(vid) {
+    const resp = await fetch('/api/documents/' + DOC_ID + '/versions/' + vid);
+    const data = await resp.json();
+    if (!data.ok) { alert(data.error); return; }
+    const v = data.version;
+    viewContent = v.content || '';
+    document.getElementById('verDlgTitle').textContent = 'v' + v.version + ' 版本内容';
+    document.getElementById('verMeta').textContent =
+        (v.change_note || '') + ' · ' + (v.changed_by_name || '—') + ' · ' + v.created_at;
+    document.getElementById('verContent').textContent = viewContent;
+    verDlg.showModal();
+}
+
+// 与当前版本做行级 diff（当前正文 vs 正在查看的历史版本）
+async function diffWithCurrent() {
+    const resp = await fetch('/api/documents/' + DOC_ID + '/raw');
+    const data = await resp.json();
+    const cur = (data.ok && data.doc.body_text) ? data.doc.body_text : currentBody;
+    const diff = lineDiff(viewContent, cur);  // 参数：旧版本、新当前
+    let html = '';
+    for (const ln of diff) {
+        if (ln.type === '+') html += `<div class="diff-add">+ ${escapeHtml(ln.text)}</div>`;
+        else if (ln.type === '-') html += `<div class="diff-del">- ${escapeHtml(ln.text)}</div>`;
+        else html += `<div class="diff-ctx">  ${escapeHtml(ln.text)}</div>`;
+    }
+    document.getElementById('verDlgTitle').textContent = '行级对比（红=历史独有，绿=当前新增）';
+    document.getElementById('verMeta').textContent = '历史版本 → 当前版本';
+    document.getElementById('verContent').innerHTML = html;
+}
+
+// 回滚到某历史版本
+async function doRollback(vid) {
+    if (!confirm('确定回滚到该版本？回滚会生成一个新的版本记录，原内容不会被删除。')) return;
+    const resp = await fetch('/api/documents/' + DOC_ID + '/rollback', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({version_id: vid}),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+        alert('已回滚到 v' + data.rollback_to + '（新版本 v' + data.version + '）');
+        loadDoc();        // 刷新编辑器正文
+        loadVersions();   // 刷新版本历史
+    } else {
+        alert(data.error || data.message || '回滚失败');
+    }
+}
+
+// 简易行级 diff：基于最长公共子序列（LCS）标记新增/删除/不变
+function lineDiff(oldText, newText) {
+    const a = oldText.split('\n');  // 旧版本行
+    const b = newText.split('\n');  // 当前行
+    const n = a.length, m = b.length;
+    if (n * m > 4000000) {
+        return [{type: '-', text: '（内容过大，无法逐行对比，请直接查看上方正文）'}];
+    }
+    const dp = Array.from({length: n + 1}, () => new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i--) {
+        for (let j = m - 1; j >= 0; j--) {
+            dp[i][j] = (a[i] === b[j])
+                ? dp[i + 1][j + 1] + 1
+                : Math.max(dp[i + 1][j], dp[i][j + 1]);
+        }
+    }
+    const out = [];
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+        if (a[i] === b[j]) { out.push({type: ' ', text: a[i]}); i++; j++; }
+        else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({type: '-', text: a[i]}); i++; }
+        else { out.push({type: '+', text: b[j]}); j++; }
+    }
+    while (i < n) { out.push({type: '-', text: a[i]}); i++; }
+    while (j < m) { out.push({type: '+', text: b[j]}); j++; }
+    return out;
+}
+
+// ---- 并发编辑锁：防止多人同时编辑互相覆盖（P 完整版补齐） ----
+let lockTimer = null;  // 续期心跳定时器句柄
+
+// 显示锁状态提示条（ok=绿/warn=黄）
+function showLockBanner(msg, kind) {
+    const b = document.getElementById('lockBanner');  // 提示条元素
+    if (!b) return;  // 不存在则跳过
+    b.textContent = msg;  // 设置提示文字
+    b.className = 'lock-banner ' + (kind || 'ok');  // 切换样式
+    b.style.display = 'block';  // 显示
+}
+
+// 获取编辑锁（打开编辑器时调用）
+async function acquireLock() {
+    if (!CAN_EDIT) return;  // 无编辑权限不拿锁
+    try {
+        const r = await fetch('/api/documents/' + DOC_ID + '/lock', {method: 'POST'});  // 请求拿锁
+        const d = await r.json();  // 解析返回
+        if (d.ok && d.enabled) {
+            // 拿到锁：提示并在 TTL/3 秒后自动续期
+            showLockBanner('🔒 您已取得编辑锁（' + (d.ttl || 300) + ' 秒内无操作自动释放，他人暂不可编辑）', 'ok');
+            // 续期间隔取 TTL 的三分之一，至少 20 秒，避免锁在操作中途意外失效
+            const interval = Math.max(20000, ((d.ttl || 300) * 1000) / 3);
+            lockTimer = setInterval(renewLock, interval);  // 启动心跳续期
+        } else if (r.status === 409) {
+            // 被他人占用：降级为只读预览，禁用编辑器与保存按钮
+            showLockBanner('⚠️ 「' + (d.held_by_name || '他人') + '」正在编辑本文档，您当前为只读预览。', 'warn');
+            quill.disable();  // 禁用编辑器
+            const sb = document.getElementById('saveBtn');  // 隐藏保存按钮
+            if (sb) sb.style.display = 'none';
+            CAN_EDIT = false;  // 后续保存逻辑禁用
+        }
+    } catch (e) { /* 网络异常忽略，不影响查看 */ }
+}
+
+// 续期编辑锁（心跳）
+async function renewLock() {
+    if (!CAN_EDIT) return;  // 已降级只读则停止
+    try {
+        const r = await fetch('/api/documents/' + DOC_ID + '/lock', {method: 'POST'});  // 续期请求
+        const d = await r.json();
+        if (!d.ok && r.status === 409) {
+            // 锁被对方抢走：降级只读并停止心跳
+            showLockBanner('⚠️ 「' + (d.held_by_name || '他人') + '」已取得编辑锁，您已切换为只读。', 'warn');
+            quill.disable();
+            const sb = document.getElementById('saveBtn');
+            if (sb) sb.style.display = 'none';
+            CAN_EDIT = false;
+            if (lockTimer) { clearInterval(lockTimer); lockTimer = null; }  // 停心跳
+        }
+    } catch (e) { /* 忽略 */ }
+}
+
+// 释放编辑锁（保存成功或离开页面时调用）
+async function releaseLock() {
+    if (!CAN_EDIT) return;  // 只读态无需释放
+    try {
+        await fetch('/api/documents/' + DOC_ID + '/lock', {method: 'DELETE'});  // 请求释放
+    } catch (e) { /* 忽略 */ }
+    if (lockTimer) { clearInterval(lockTimer); lockTimer = null; }  // 清心跳
+}
+
+// 离开页面时释放锁，避免长期占用
+window.addEventListener('beforeunload', releaseLock);
+
+// 转义 HTML，防止正文内容破坏页面结构
+function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, c => (
+        {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]
+    ));
+}
+</script>
+{% endblock %}

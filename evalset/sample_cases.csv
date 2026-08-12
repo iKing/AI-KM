@@ -1,0 +1,7 @@
+﻿question,expect_doc_ids,category_l1,case_type,note,active
+高值医用耗材集采政策对医院采购流程有什么影响,1,POLICY,normal,常规问法,1
+医院采购冠脉支架必须走省级平台统一下单吗,1,POLICY,normal,具体品类问法,1
+集采之后医院还能自行和厂家议价吗,1,POLICY,normal,反问议价权限,1
+国家对骨科耗材的集中采购是怎么规定的,1,POLICY,paraphrase,同义改写：骨科耗材=骨科耗材集采,1
+未中选的耗材产品还能在医院使用吗,1,POLICY,paraphrase,同义改写：未中选=没中标,1
+医疗器械注册证有效期是几年,1,POLICY,outside,库外问题，用于验证无知识时拒答/零结果,1

@@ -1,0 +1,406 @@
+{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+{% block title %}{{ doc.title }} · AI-KM{% endblock %}
+{% block page_title %}文档详情{% endblock %}
+{% block content %}
+<div class="doc-detail">
+    <div class="doc-head">
+        <h2>{{ doc.title }}</h2>
+        <div class="doc-actions">
+            <a class="btn btn-sm" href="/doc/{{ doc.id }}/edit">✏️ 编辑 / 版本历史</a>
+            <a class="btn btn-sm" href="/doc/{{ doc.id }}/draw">🖊️ 内联画图</a>
+            <a class="btn btn-sm" href="/api/documents/{{ doc.id }}/export/md">⬇️ 导出 Markdown</a>
+            <a class="btn btn-sm" href="/api/documents/{{ doc.id }}/export/docx">⬇️ 导出 Word</a>
+            <a class="btn btn-sm" href="/api/documents/{{ doc.id }}/export/pdf">⬇️ 导出 PDF</a>
+            <a class="btn btn-sm" href="/doc/{{ doc.id }}/print" target="_blank">🖨️ 打印预览</a>
+        </div>
+        {% if space_path %}
+        <div class="doc-breadcrumb">
+            📚 知识树：
+            {% for sp in space_path %}
+            <span class="crumb">{{ sp.name }}</span>{% if not loop.last %}<span class="crumb-sep">/</span>{% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+        <div class="doc-meta">
+            <span class="badge badge-{{ doc.security_level }}">{{ SECURITY_LEVELS.get(doc.security_level) }}</span>
+            <span class="badge">{{ CATEGORIES_L1.get(doc.category_l1) }}</span>
+            <span class="badge">{{ QUALITY_LEVELS.get(doc.quality_level) }}</span>
+            <span class="badge">{{ DOC_STATUS.get(doc.status) }}</span>
+        </div>
+    </div>
+
+    {# ---- 标签区（P1 标签体系）---- #}
+    <div class="doc-tags">
+        <b>标签：</b>
+        <span id="tagList" class="tag-list">
+            {% for t in doc_tags %}
+            <span class="tag-chip" data-tag="{{ t.name }}">{{ t.name }}{% if can_edit %}<button class="tag-x" data-tag="{{ t.name }}" title="移除">×</button>{% endif %}</span>
+            {% else %}
+            <span class="tag-empty">暂无标签</span>
+            {% endfor %}
+        </span>
+        {% if can_edit %}
+        <span class="tag-add">
+            <input id="tagInput" class="tag-input" placeholder="添加标签后回车" maxlength="50" />
+            <button id="tagAddBtn" class="btn btn-sm">+ 添加</button>
+        </span>
+        {% endif %}
+    </div>
+
+    <div class="doc-info">
+        <div><b>归属部门：</b>{{ doc.dept_name }}</div>
+        <div><b>责任人：</b>{{ doc.owner or '—' }}</div>
+        <div><b>生效日期：</b>{{ doc.effective_date or '—' }}</div>
+        <div><b>下次复审：</b>{{ doc.next_review_at or '—' }}</div>
+        <div><b>来源：</b>{{ doc.source or '—' }}</div>
+        <div><b>字数/片段：</b>{{ doc.content_length }} / {{ doc.chunk_count }}</div>
+    </div>
+    {% if doc.summary %}
+    <div class="doc-summary"><b>摘要：</b>{{ doc.summary }}</div>
+    {% endif %}
+    {% if doc.reject_reason %}
+    <div class="reject-reason">退回原因：{{ doc.reject_reason }}</div>
+    {% endif %}
+
+    {# ---- 交叉引用区（P1 交叉引用）---- #}
+    <div class="doc-links">
+        <div class="link-col">
+            <h4>📤 本文引用（{{ out_links|length }}）</h4>
+            {% if out_links %}
+            <ul class="link-list">
+                {% for l in out_links %}
+                <li><a href="/doc/{{ l.id }}">{{ l.title }}</a>{% if l.link_text %} <span class="link-note">（{{ l.link_text }}）</span>{% endif %}</li>
+                {% endfor %}
+            </ul>
+            {% else %}<div class="link-empty">无</div>{% endif %}
+        </div>
+        <div class="link-col">
+            <h4>📥 被引用（{{ in_links|length }}）</h4>
+            {% if in_links %}
+            <ul class="link-list">
+                {% for l in in_links %}
+                <li><a href="/doc/{{ l.id }}">{{ l.title }}</a>{% if l.link_text %} <span class="link-note">（{{ l.link_text }}）</span>{% endif %}</li>
+                {% endfor %}
+            </ul>
+            {% else %}<div class="link-empty">暂无其他文档引用本文</div>{% endif %}
+        </div>
+    </div>
+
+    {# ---- 章节锚点目录（P1 段落锚点）---- #}
+    {% set headings = chunks | selectattr("heading_path") | list %}
+    {% if headings %}
+    <details class="doc-outline">
+        <summary>📑 章节目录（点击锚点直达）</summary>
+        <ul class="outline-list">
+            {% for c in headings %}
+            <li class="outline-item" style="padding-left:{{ (c.heading_path.count('>')) * 14 }}px">
+                <a href="#{{ c.anchor }}">{{ c.heading_path }}</a>
+            </li>
+            {% endfor %}
+        </ul>
+    </details>
+    {% endif %}
+
+    {# ---- 章节正文（带锚点，可 #anchor 直达）---- #}
+    {# ---- 正文区：富文本优先，老库无 HTML 时回退切片渲染 ---- #}
+    {% if doc.body_html %}
+    {# 富文本模式：直接渲染服务端净化后的 HTML（已做过 XSS 净化，可 safe） #}
+    <div class="doc-body doc-rich">{{ doc.body_html | safe }}</div>
+    <details class="chunks-detail">
+        <summary>📄 查看全文检索切片（{{ doc.chunk_count }} 段）</summary>
+        <div class="doc-sections">
+            {% for c in chunks %}
+            <section id="{{ c.anchor }}" class="doc-section">
+                {% if c.heading_path %}
+                <h3 class="section-head">
+                    <a class="anchor-link" href="#{{ c.anchor }}" title="复制此段落链接">#</a>
+                    <span>{{ c.heading_path }}</span>
+                </h3>
+                {% endif %}
+                <div class="chunk-content">{{ c.content }}</div>
+                <div class="chunk-foot">{{ c.char_count }} 字</div>
+            </section>
+            {% endfor %}
+        </div>
+    </details>
+    {% else %}
+    {# 老库/上传文档（无富文本）：按切片展示，保持原行为 #}
+    <div class="doc-sections">
+        {% for c in chunks %}
+        <section id="{{ c.anchor }}" class="doc-section">
+            {% if c.heading_path %}
+            <h3 class="section-head">
+                <a class="anchor-link" href="#{{ c.anchor }}" title="复制此段落链接">#</a>
+                <span>{{ c.heading_path }}</span>
+            </h3>
+            {% endif %}
+            <div class="chunk-content">{{ c.content }}</div>
+            <div class="chunk-foot">{{ c.char_count }} 字</div>
+        </section>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {# ---- 文档级细粒度可见权限面板（P 完整版补齐）---- #}
+    <div class="doc-acl">
+        <h4>🔐 可见权限</h4>
+        <div class="acl-current">
+            当前模式：<b id="aclModeLabel">{{ '受限（仅指定对象可见）' if acl_info.visibility_mode == 'restricted' else '继承全局规则' }}</b>
+            {% if acl_info.entries %}
+            <ul class="acl-list" id="aclList">
+                {% for e in acl_info.entries %}
+                <li>{{ '用户' if e.principal_type == 'user' else '角色' }}：{{ e.principal_name or e.principal_id }} · {{ '可编辑' if e.perm == 'view_edit' else '仅查看' }}</li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <span class="muted">（无额外指定，按全局规则可见）</span>
+            {% endif %}
+        </div>
+        {% if can_manage_acl %}
+        <div class="acl-edit">
+            <label class="acl-mode-label">可见模式
+                <select id="aclMode">
+                    <option value="inherit" {{ 'selected' if acl_info.visibility_mode == 'inherit' }}>继承全局规则</option>
+                    <option value="restricted" {{ 'selected' if acl_info.visibility_mode == 'restricted' }}>受限（仅以下指定对象可见）</option>
+                </select>
+            </label>
+            <div id="aclEntries" class="acl-entries"></div>
+            <div class="acl-actions">
+                <button class="btn btn-sm" id="aclAddBtn">+ 添加授权对象</button>
+                <button class="btn btn-sm btn-primary" id="aclSaveBtn">保存权限</button>
+                <span id="aclMsg" class="upload-msg"></span>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    {# ---- 页面级评论（P1 页面级评论）---- #}
+    <div class="doc-comments">
+        <h4>💬 评论（{{ comments|length }}）</h4>
+        <div id="commentList" class="comment-list">
+            {% for c in comments %}
+            <div class="comment-item" data-cid="{{ c.id }}">
+                <div class="comment-head"><b>{{ c.author }}</b> <span class="muted">{{ c.created_at }}</span>
+                    {% if is_admin or c.user_id == current_user_id %}<a class="comment-del" data-cid="{{ c.id }}">删除</a>{% endif %}
+                </div>
+                <div class="comment-body">{{ c.content }}</div>
+            </div>
+            {% else %}
+            <div class="comment-empty">暂无评论，来写第一条吧</div>
+            {% endfor %}
+        </div>
+        <div class="comment-form">
+            <textarea id="commentInput" rows="2" placeholder="发表评论…（最多 1000 字）" maxlength="1000"></textarea>
+            <button class="btn btn-sm btn-primary" onclick="postComment()">发表</button>
+        </div>
+    </div>
+
+    {# ---- 内嵌图（P2 diagrams.net 内联画图，只读展示）---- #}
+    <div class="doc-diagrams">
+        <h4>🖊️ 内嵌图（{{ diagrams|length }}）</h4>
+        {% if diagrams %}
+        <ul class="diagram-list">
+            {% for g in diagrams %}
+            <li><a href="/doc/{{ doc.id }}/draw?view=1&diagram={{ g.id }}">{{ g.title }}</a>
+                <span class="muted">（更新于 {{ g.updated_at }}）</span></li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <div class="link-empty">暂无内嵌图，可在「🖊️ 内联画图」中创建</div>
+        {% endif %}
+    </div>
+</div>
+
+{% if can_edit %}
+<script>
+// 文档标签管理：增删标签后整体提交（PUT /api/documents/<id>/tags）
+// 说明：DOC_ID 在下方「评论区脚本」中统一定义（所有登录用户共用），本块直接使用，避免重复声明
+const tagList = document.getElementById("tagList");  // 标签容器
+const tagInput = document.getElementById("tagInput");  // 标签输入框
+
+// 把当前标签芯片上的标签名收集成数组，整体 PUT 给后端
+function saveTags() {
+    const names = Array.from(tagList.querySelectorAll(".tag-chip")).map(el => el.dataset.tag);  // 读出所有标签名
+    fetch(`/api/documents/${DOC_ID}/tags`, {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({tags: names}),  // 整体替换语义
+    }).then(r => r.json()).then(d => {
+        if (!d.ok) alert("保存标签失败：" + (d.error || ""));  // 出错提示
+    });
+}
+
+// 添加一个标签：先在本地渲染芯片，再保存
+function addTag() {
+    const name = (tagInput.value || "").trim();  // 读取并去空白
+    if (!name) return;  // 空名不处理
+    // 去重：已存在同名芯片则不重复加
+    if (Array.from(tagList.querySelectorAll(".tag-chip")).some(el => el.dataset.tag === name)) {
+        tagInput.value = ""; return;
+    }
+    const chip = document.createElement("span");  // 新建芯片
+    chip.className = "tag-chip";
+    chip.dataset.tag = name;
+    chip.innerHTML = name + '<button class="tag-x" data-tag="' + name + '" title="移除">×</button>';
+    // 若原先有"暂无标签"占位，移除它
+    const empty = tagList.querySelector(".tag-empty");
+    if (empty) empty.remove();
+    tagList.appendChild(chip);  // 加入容器
+    tagInput.value = "";  // 清空输入框
+    saveTags();  // 持久化
+}
+
+// 移除一个标签：点击 × 后删除芯片并保存
+tagList.addEventListener("click", e => {
+    if (e.target.classList.contains("tag-x")) {  // 点到删除按钮
+        e.target.parentElement.remove();  // 移除整个芯片
+        if (tagList.children.length === 0) {  // 若清空了，补回占位
+            tagList.innerHTML = '<span class="tag-empty">暂无标签</span>';
+        }
+        saveTags();  // 持久化
+    }
+});
+
+// 绑定"添加"按钮与回车快捷键
+document.getElementById("tagAddBtn").addEventListener("click", addTag);
+tagInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); addTag(); } });
+</script>
+{% endif %}
+
+{% if can_manage_acl %}
+<script>
+// 文档级细粒度权限管理面板（仅管理员/创建人可见、可编辑）
+const ACL_DOC_ID = {{ doc.id }};  // 当前文档 ID（本面板专用，避免与下方 DOC_ID 重复声明冲突）
+const ACL_USERS = {{ acl_users | tojson }};  // 可选用户列表（仅启用账号）
+const ACL_ROLES = {{ acl_roles | tojson }};  // 可选角色列表
+let aclEntries = {{ acl_info.entries | tojson }};  // 当前 ACL 明细（可编辑副本）
+const aclModeSel = document.getElementById('aclMode');  // 模式下拉框
+const aclEntriesBox = document.getElementById('aclEntries');  // 明细容器
+
+// 取主体显示名（用户拼 姓名(账号)，角色取中文名）
+function aclPrincipalName(type, id) {
+    if (type === 'user') {
+        const u = ACL_USERS.find(x => String(x.id) === String(id));
+        return u ? (u.display_name + '(' + u.username + ')') : id;
+    }
+    const r = ACL_ROLES.find(x => x.key === id);
+    return r ? r.name : id;
+}
+
+// 按主体类型填充「主体」下拉（用户/角色二选一）
+function fillAclPid(sel, type, selected) {
+    sel.innerHTML = '';  // 清空
+    const list = type === 'user'
+        ? ACL_USERS.map(u => ({id: u.id, name: u.display_name + '(' + u.username + ')'}))
+        : ACL_ROLES.map(r => ({id: r.key, name: r.name}));
+    list.forEach(o => {  // 逐选项
+        const op = document.createElement('option');
+        op.value = o.id; op.textContent = o.name;
+        if (String(o.id) === String(selected)) op.selected = true;  // 选中当前值
+        sel.appendChild(op);
+    });
+}
+
+// 重新渲染 ACL 明细编辑行
+function renderAclEntries() {
+    aclEntriesBox.innerHTML = '';  // 清空
+    aclEntries.forEach((e, idx) => {  // 遍历每条
+        const row = document.createElement('div');
+        row.className = 'acl-row';  // 一行样式
+        row.innerHTML =
+            '<select class="acl-type"><option value="user"' + (e.principal_type === 'user' ? ' selected' : '') + '>用户</option>' +
+            '<option value="role"' + (e.principal_type === 'role' ? ' selected' : '') + '>角色</option></select> ' +
+            '<select class="acl-pid"></select> ' +
+            '<select class="acl-perm"><option value="view"' + (e.perm === 'view' ? ' selected' : '') + '>仅查看</option>' +
+            '<option value="view_edit"' + (e.perm === 'view_edit' ? ' selected' : '') + '>可编辑</option></select> ' +
+            '<button class="acl-del" title="删除">删除</button>';
+        aclEntriesBox.appendChild(row);
+        const pidSel = row.querySelector('.acl-pid');
+        fillAclPid(pidSel, e.principal_type, e.principal_id);  // 填充主体下拉
+        row.querySelector('.acl-type').addEventListener('change', ev => {  // 切换用户/角色
+            e.principal_type = ev.target.value;
+            fillAclPid(pidSel, e.principal_type, '');
+        });
+        pidSel.addEventListener('change', ev => { e.principal_id = ev.target.value; });  // 选主体
+        row.querySelector('.acl-perm').addEventListener('change', ev => { e.perm = ev.target.value; });  // 选权限
+        row.querySelector('.acl-del').addEventListener('click', () => { aclEntries.splice(idx, 1); renderAclEntries(); });  // 删除行
+    });
+}
+
+// 添加一行空授权
+document.getElementById('aclAddBtn').addEventListener('click', () => {
+    aclEntries.push({principal_type: 'user', principal_id: ACL_USERS.length ? ACL_USERS[0].id : '', perm: 'view'});
+    renderAclEntries();
+});
+
+// 保存权限（PUT /api/documents/<id>/acl）
+document.getElementById('aclSaveBtn').addEventListener('click', async () => {
+    const msg = document.getElementById('aclMsg');  // 提示
+    const body = {visibility_mode: aclModeSel.value, entries: aclEntries};  // 提交体
+    try {
+        const r = await fetch('/api/documents/' + ACL_DOC_ID + '/acl', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            msg.textContent = '权限已保存'; msg.className = 'upload-msg ok';
+            // 同步更新只读展示区
+            document.getElementById('aclModeLabel').textContent = d.visibility_mode === 'restricted' ? '受限（仅指定对象可见）' : '继承全局规则';
+            const ul = document.getElementById('aclList');
+            ul.innerHTML = d.entries.map(e => '<li>' + (e.principal_type === 'user' ? '用户' : '角色') + '：' + (e.principal_name || e.principal_id) + ' · ' + (e.perm === 'view_edit' ? '可编辑' : '仅查看') + '</li>').join('') || '<span class="muted">（无额外指定，按全局规则可见）</span>';
+            setTimeout(() => location.reload(), 600);  // 短暂提示后刷新，让新权限生效
+        } else {
+            msg.textContent = d.error || '保存失败'; msg.className = 'upload-msg err';
+        }
+    } catch (err) { msg.textContent = '保存失败：' + err; msg.className = 'upload-msg err'; }
+});
+
+renderAclEntries();  // 初次渲染
+</script>
+{% endif %}
+
+{# ---- 评论区交互脚本（所有登录用户均可评论，不受 can_edit 限制）---- #}
+<script>
+// DOC_ID 统一定义在此处：标签脚本与评论脚本共用，避免重复声明导致 JS 报错
+const DOC_ID = {{ doc.id }};  // 当前文档 ID，评论接口路径需要
+const commentInput = document.getElementById("commentInput");  // 评论输入框
+const commentList = document.getElementById("commentList");  // 评论列表容器（事件委托用）
+
+// 发表评论：POST /api/documents/<id>/comments
+// 任何能看到本文档的登录用户都可调用；后端再校验可见性与内容非空
+async function postComment() {
+    const content = (commentInput.value || "").trim();  // 读取并去首尾空白
+    if (!content) return;  // 空内容直接返回，不发起请求
+    try {
+        const r = await fetch(`/api/documents/${DOC_ID}/comments`, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({content}),  // 评论正文 JSON
+        });
+        const d = await r.json();  // 解析后端返回
+        if (d.ok) {  // 成功：清空输入框并刷新列表（拿到最新评论与计数）
+            commentInput.value = "";
+            location.reload();
+        } else {  // 失败：弹窗提示原因
+            alert(d.error || "评论失败");
+        }
+    } catch (err) {  // 网络等异常
+        alert("评论失败：" + err);
+    }
+}
+
+// 删除评论：用事件委托绑定在评论列表容器上（按钮是动态渲染的）
+// 仅评论作者本人或管理员能看到删除链接（模板已按 is_admin / user_id 控制），
+// 后端还会二次校验「作者本人或管理员」，双重保险
+if (commentList) {
+    commentList.addEventListener("click", e => {
+        if (e.target.classList.contains("comment-del")) {  // 点到「删除」链接
+            const cid = e.target.dataset.cid;  // 取出评论 ID
+            fetch(`/api/documents/${DOC_ID}/comments/${cid}`, {method: "DELETE"})
+                .then(() => location.reload());  // 删除成功后刷新页面
+        }
+    });
+}
+</script>
+{% endblock %}

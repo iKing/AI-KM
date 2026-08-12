@@ -1,0 +1,77 @@
+{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+{% block title %}效能看板 · AI-KM{% endblock %}
+{% block page_title %}效能看板{% endblock %}
+{% block content %}
+<div id="dash" class="dash">
+    <div class="loading">加载中…</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 加载看板数据并渲染
+async function loadDashboard() {
+    try {
+        const r = await fetch('/api/dashboard/stats');
+        const d = await r.json();
+        if (!d.ok) { document.getElementById('dash').innerHTML = '<div class="empty">加载失败</div>'; return; }
+        render(d);
+    } catch (e) {
+        document.getElementById('dash').innerHTML = '<div class="empty">网络错误：' + e.message + '</div>';
+    }
+}
+
+function render(d) {
+    const s = d.search;       // 检索统计
+    const sd = d.status_dist; // 文档状态分布
+    // 状态中文名映射
+    const statusName = {
+        uploaded: '已上传', parsing: '解析中', parsed: '已解析',
+        pending_review: '待审核', published: '已发布', rejected: '已退回', archived: '已下架',
+    };
+    const statusHtml = Object.keys(sd).length
+        ? Object.entries(sd).map(([k, v]) =>
+            `<div class="kv"><span>${statusName[k] || k}</span><b>${v}</b></div>`).join('')
+        : '<div class="kv">暂无数据</div>';
+
+    // 热门检索 Top10
+    const topHtml = (s.top_queries || []).slice(0, 10).map(q =>
+        `<li>${escapeHtml(q.query)} <span class="muted">×${q.count}</span></li>`).join('') || '<li class="muted">暂无</li>';
+
+    // 知识缺口（零结果）Top10
+    const zeroHtml = (s.zero_queries || []).slice(0, 10).map(q =>
+        `<li>${escapeHtml(q.query)} <span class="muted">×${q.count}</span></li>`).join('') || '<li class="muted">暂无零结果</li>';
+
+    document.getElementById('dash').innerHTML = `
+        <div class="cards">
+            <div class="card"><div class="card-num">${d.doc_total}</div><div class="card-label">知识文档</div></div>
+            <div class="card"><div class="card-num">${d.chunk_total}</div><div class="card-label">知识片段</div></div>
+            <div class="card"><div class="card-num">${s.total_searches}</div><div class="card-label">近30天检索</div></div>
+            <div class="card"><div class="card-num">${s.zero_result_rate}%</div><div class="card-label">零结果率</div></div>
+            <div class="card"><div class="card-num">${s.avg_cost_ms}ms</div><div class="card-label">平均耗时</div></div>
+            <div class="card"><div class="card-num">${s.active_users}</div><div class="card-label">活跃用户</div></div>
+        </div>
+        <div class="grid-2">
+            <div class="panel">
+                <h3>文档状态分布</h3>
+                <div class="kvs">${statusHtml}</div>
+            </div>
+            <div class="panel">
+                <h3>近30天检索趋势</h3>
+                <div class="trend">${(s.daily || []).map(p => `<span class="bar" style="height:${Math.max(4, p.count*4)}px" title="${p.day}: ${p.count}"></span>`).join('') || '<span class="muted">暂无</span>'}</div>
+            </div>
+            <div class="panel">
+                <h3>热门检索词 Top10</h3>
+                <ul class="rank-list">${topHtml}</ul>
+            </div>
+            <div class="panel">
+                <h3>知识缺口（零结果）Top10</h3>
+                <ul class="rank-list">${zeroHtml}</ul>
+            </div>
+        </div>
+    `;
+}
+loadDashboard();
+</script>
+{% endblock %}

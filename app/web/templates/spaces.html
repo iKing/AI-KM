@@ -1,0 +1,193 @@
+{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+{% block title %}知识树 · AI-KM{% endblock %}
+{% block page_title %}知识树（层级组织）{% endblock %}
+{% block content %}
+<div class="toolbar">
+    <button class="btn btn-primary" onclick="openCreate(0)">＋ 新建顶层书架</button>
+    <span class="muted">书架 → 书籍 → 章节，把文档挂到节点上形成 BookStack 式层级结构</span>
+</div>
+
+<div id="tree" class="tree-box"></div>
+
+{# 创建/编辑节点模态框：用原生 dialog 元素，避免额外依赖 #}
+<dialog id="dlg" class="dialog">
+    <form method="dialog" class="dialog-form" id="spaceForm">
+        <h3 id="dlgTitle">新建节点</h3>
+        <input type="hidden" id="fId">
+        <input type="hidden" id="fParent">
+        <div class="form-row">
+            <label>名称 <span class="req">*</span></label>
+            <input type="text" id="fName" placeholder="如：高值耗材集采政策">
+        </div>
+        <div class="form-row two">
+            <div>
+                <label>类型</label>
+                <select id="fKind" class="select">
+                    {% for code, name in SPACE_KINDS.items() %}
+                    <option value="{{ code }}">{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>密级</label>
+                <select id="fSec" class="select">
+                    {% for code, name in SECURITY_LEVELS.items() %}
+                    <option value="{{ code }}">{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="form-row">
+            <label>归属部门（留空=全公司可见）</label>
+            <select id="fDept" class="select">
+                <option value="">全公司可见</option>
+                {% for d in departments %}
+                <option value="{{ d.id }}">{{ d.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-row">
+            <label>说明</label>
+            <textarea id="fDesc" rows="2"></textarea>
+        </div>
+        <div class="dialog-actions">
+            <button class="btn" value="cancel" onclick="dlg.close()">取消</button>
+            <button class="btn btn-primary" id="fSubmit" onclick="submitForm(event)">保存</button>
+        </div>
+        <div id="dlgMsg" class="upload-msg"></div>
+    </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 当前用户是否有节点管理权限（创建/编辑/删除），普通用户只读
+const canEdit = {{ 'true' if user and user.role in ('admin','reviewer','contributor') else 'false' }};
+// 知识树类型中文名映射（服务端注入）
+const KIND_NAMES = {{ SPACE_KINDS | tojson | safe }};
+
+// 页面加载即渲染树
+loadTree();
+
+// 拉取并渲染整棵可见知识树
+async function loadTree() {
+    const resp = await fetch('/api/spaces/tree');
+    const data = await resp.json();
+    const el = document.getElementById('tree');
+    if (!data.ok || !data.tree.length) {
+        el.innerHTML = '<div class="empty">还没有知识树节点，点击上方"新建顶层书架"开始搭建</div>';
+        return;
+    }
+    // 递归渲染嵌套树
+    el.innerHTML = '<ul class="tree-ul">' + data.tree.map(renderNode).join('') + '</ul>';
+}
+
+// 渲染单个树节点（含其子节点）
+function renderNode(n) {
+    const kindName = KIND_NAMES[n.kind] || n.kind;  // 类型中文名，找不到则用原始值
+    const secBadge = `<span class="badge badge-${n.security_level}">${n.security_level}</span>`;
+    // 子节点递归
+    const childrenHtml = (n.children && n.children.length)
+        ? '<ul class="tree-ul">' + n.children.map(renderNode).join('') + '</ul>' : '';
+    // 管理按钮仅对有编辑权限的用户显示
+    const actions = canEdit
+        ? `<span class="tree-actions">
+             <a href="javascript:void(0)" onclick="openCreate(${n.id})">＋子节点</a>
+             <a href="javascript:void(0)" onclick="openEdit(${n.id})">编辑</a>
+             <a href="javascript:void(0)" class="danger" onclick="delSpace(${n.id})">删除</a>
+           </span>` : '';
+    return `<li class="tree-li">
+        <div class="tree-node">
+            <span class="tree-kind">[${kindName}]</span>
+            <span class="tree-name">${escapeHtml(n.name)}</span>
+            ${secBadge}
+            <span class="muted">(${n.doc_count} 篇)</span>
+            ${actions}
+        </div>
+        ${childrenHtml}
+    </li>`;
+}
+
+const dlg = document.getElementById('dlg');  // 模态框引用
+
+// 打开"新建"模态：parentId=0 表示顶层书架
+function openCreate(parentId) {
+    if (!canEdit) return;
+    document.getElementById('dlgTitle').textContent = parentId ? '新建子节点' : '新建顶层书架';
+    document.getElementById('fId').value = '';
+    document.getElementById('fParent').value = parentId || '';
+    document.getElementById('fName').value = '';
+    document.getElementById('fKind').value = 'shelf';
+    document.getElementById('fSec').value = 'internal';
+    document.getElementById('fDept').value = '';
+    document.getElementById('fDesc').value = '';
+    document.getElementById('dlgMsg').textContent = '';
+    dlg.showModal();  // 弹出模态
+}
+
+// 打开"编辑"模态：先拉树找到该节点填充表单
+async function openEdit(id) {
+    if (!canEdit) return;
+    const resp = await fetch('/api/spaces/tree');
+    const data = await resp.json();
+    const node = (data.flat || []).find(x => x.id === id);
+    if (!node) return;
+    document.getElementById('dlgTitle').textContent = '编辑节点';
+    document.getElementById('fId').value = node.id;
+    document.getElementById('fParent').value = node.parent_id || '';
+    document.getElementById('fName').value = node.name;
+    document.getElementById('fKind').value = node.kind;
+    document.getElementById('fSec').value = node.security_level;
+    document.getElementById('fDept').value = node.department_id || '';
+    document.getElementById('fDesc').value = node.description || '';
+    document.getElementById('dlgMsg').textContent = '';
+    dlg.showModal();
+}
+
+// 提交创建/编辑表单
+async function submitForm(e) {
+    e.preventDefault();  // 阻止表单默认提交关闭对话框
+    const id = document.getElementById('fId').value;
+    const body = {
+        name: document.getElementById('fName').value.trim(),
+        kind: document.getElementById('fKind').value,
+        security_level: document.getElementById('fSec').value,
+        department_id: document.getElementById('fDept').value || null,
+        description: document.getElementById('fDesc').value.trim() || null,
+        parent_id: document.getElementById('fParent').value || null,
+        sort_order: 0,
+    };
+    if (!body.name) { document.getElementById('dlgMsg').textContent = '名称必填'; return; }
+    let resp;
+    if (id) {
+        // 已有 ID → 走更新接口
+        resp = await fetch('/api/spaces/' + id, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+    } else {
+        // 无 ID → 走新建接口
+        resp = await fetch('/api/spaces', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+    }
+    const data = await resp.json();
+    if (data.ok) { dlg.close(); loadTree(); }  // 成功则关闭并刷新树
+    else { document.getElementById('dlgMsg').textContent = data.error || '保存失败'; }
+}
+
+// 删除节点（需先清空子节点与文档）
+async function delSpace(id) {
+    if (!canEdit) return;
+    if (!confirm('确定删除该节点？需先清空其子节点与文档。')) return;
+    const resp = await fetch('/api/spaces/' + id, {method: 'DELETE'});
+    const data = await resp.json();
+    if (data.ok) loadTree();  // 刷新树
+    else alert(data.error || '删除失败');
+}
+</script>
+{% endblock %}

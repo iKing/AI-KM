@@ -1,0 +1,133 @@
+{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+{% block title %}知识检索 · AI-KM{% endblock %}
+{% block page_title %}知识检索{% endblock %}
+{% block content %}
+<div class="toolbar">
+    <input type="text" id="searchInput" class="search-input" placeholder="输入关键词检索知识，如：高值耗材集采政策" autofocus>
+    <select id="modeSelect" class="select">
+        <option value="hybrid">混合检索</option>
+        <option value="bm25">仅关键词</option>
+        <option value="vector">仅语义</option>
+    </select>
+    <button class="btn btn-primary" onclick="doSearch()">检索</button>
+</div>
+
+{# 过滤行：分类 / 部门 / 密级 #}
+<div class="filters">
+    <select id="filterCat" class="select">
+        <option value="">全部分类</option>
+        {% for code, name in CATEGORIES_L1.items() %}
+        <option value="{{ code }}">{{ name }}</option>
+        {% endfor %}
+    </select>
+    <select id="filterDept" class="select">
+        <option value="">全部部门</option>
+    </select>
+    <select id="filterSec" class="select">
+        <option value="">全部密级</option>
+        {% for code, name in SECURITY_LEVELS.items() %}
+        <option value="{{ code }}">{{ name }}</option>
+        {% endfor %}
+    </select>
+    <select id="filterTag" class="select">
+        <option value="">全部标签</option>
+    </select>
+</div>
+
+<div id="statsBar" class="stats-bar"></div>
+<div id="results" class="results"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 页面加载时拉取部门列表，填充部门下拉框
+async function loadDepartments() {
+    try {
+        const resp = await fetch('/api/departments');
+        const data = await resp.json();
+        if (data.ok) {
+            const sel = document.getElementById('filterDept');
+            data.departments.forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d.id;
+                opt.textContent = d.name;
+                sel.appendChild(opt);
+            });
+        }
+    } catch (e) { /* 部门加载失败不阻塞检索 */ }
+}
+loadDepartments();
+
+// 页面加载时拉取标签列表，填充标签下拉框（P1 标签体系）
+async function loadTags() {
+    try {
+        const resp = await fetch('/api/tags');
+        const data = await resp.json();
+        if (data.ok) {
+            const sel = document.getElementById('filterTag');
+            data.tags.forEach(t => {
+                const opt = document.createElement('option');
+                opt.value = t.name;
+                opt.textContent = `${t.name}（${t.use_count}）`;  // 显示标签名与文档数
+                sel.appendChild(opt);
+            });
+        }
+    } catch (e) { /* 标签加载失败不阻塞检索 */ }
+}
+loadTags();
+
+// 执行检索
+async function doSearch() {
+    const q = document.getElementById('searchInput').value.trim();
+    const resultsEl = document.getElementById('results');
+    const statsEl = document.getElementById('statsBar');
+    if (!q) { resultsEl.innerHTML = '<div class="empty">请输入检索词</div>'; return; }
+
+    // 组装查询字符串
+    const params = new URLSearchParams({q, mode: document.getElementById('modeSelect').value});
+    const cat = document.getElementById('filterCat').value;
+    const sec = document.getElementById('filterSec').value;
+    const dept = document.getElementById('filterDept').value;
+    const tag = document.getElementById('filterTag').value;
+    if (cat) params.set('category_l1', cat);
+    if (sec) params.set('security_level', sec);
+    if (dept) params.set('department_id', dept);
+    if (tag) params.set('tag', tag);  // 按标签过滤（P1 标签体系）
+
+    statsEl.textContent = '检索中…';
+    try {
+        const resp = await fetch('/api/search?' + params.toString());
+        const data = await resp.json();
+        if (!data.ok) { resultsEl.innerHTML = '<div class="empty">检索失败</div>'; return; }
+        const s = data.stats;
+        statsEl.textContent = `命中 ${s.total} 条 · 耗时 ${s.cost_ms}ms · BM25召回 ${s.bm25_count} · 向量召回 ${s.vector_count}`;
+        renderResults(data.results);
+    } catch (ex) {
+        resultsEl.innerHTML = '<div class="empty">网络错误：' + ex.message + '</div>';
+    }
+}
+
+// 渲染结果列表
+function renderResults(results) {
+    const el = document.getElementById('results');
+    if (!results.length) { el.innerHTML = '<div class="empty">未找到相关知识，可尝试更换关键词或联系部门补充</div>'; return; }
+    el.innerHTML = results.map(r => `
+        <div class="result-card">
+            <div class="result-head">
+                <a class="result-title" href="/doc/${r.doc_id}${r.anchor ? '#' + r.anchor : ''}">${escapeHtml(r.title)}</a>
+                <span class="badge badge-${r.security_level}">${r.security_name}</span>
+                <span class="badge">${r.category_name}</span>
+                <span class="badge">${r.quality_name}</span>
+            </div>
+            <div class="result-meta">${r.department} · 责任人 ${r.owner || '—'} · 相关度 ${r.score}</div>
+            <div class="result-body">${r.highlight || escapeHtml(r.content.slice(0, 200))}</div>
+            <div class="result-path">${r.heading_path || ''}</div>
+        </div>
+    `).join('');
+}
+
+// 回车即检索
+document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+</script>
+{% endblock %}

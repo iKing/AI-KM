@@ -1,0 +1,35 @@
+{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+{% block title %}API 文档 · REST v1{% endblock %}
+{% block page_title %}标准 REST API（v1）文档{% endblock %}
+{% block content %}
+<div class="api-docs-wrap">
+    <div id="swagger-ui"></div>
+    <p class="muted" style="padding:12px">
+        接口前缀 <code>{{ openapi_url }}</code>。鉴权支持两种方式：① 已登录的浏览器会话；②
+        HTTP 头 <code>Authorization: Bearer &lt;API Key&gt;</code>（在「管理后台 → API 密钥」创建）。
+    </p>
+</div>
+
+{# Swagger UI 通过 CDN 加载（需联网）。openapi 规范由 /api/v1/openapi.json 提供 #}
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>
+// 初始化 Swagger UI，指向本系统的 openapi 规范地址
+window.onload = () => {
+    if (window.SwaggerUIBundle) {  // CDN 加载成功
+        window.ui = SwaggerUIBundle({
+            url: "{{ openapi_url }}",            // 规范地址
+            dom_id: "#swagger-ui",
+            deepLinking: true,                  // 支持锚点直达某接口
+            presets: [SwaggerUIBundle.presets.apis],
+            layout: "BaseLayout",
+        });
+    } else {  // CDN 加载失败（离线）时降级提示
+        document.getElementById("swagger-ui").innerHTML =
+            '<p class="muted">Swagger UI 资源加载失败（可能离线）。请直接访问 '
+            + '<a href="{{ openapi_url }}">{{ openapi_url }}</a> 获取 OpenAPI 规范 JSON。</p>';
+    }
+};
+</script>
+{% endblock %}

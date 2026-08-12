@@ -1,0 +1,126 @@
+{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+{% block title %}知识入库 · AI-KM{% endblock %}
+{% block page_title %}知识入库{% endblock %}
+{% block content %}
+<div class="form-card">
+    <div class="form-hint">
+        入库即按《知识分类标准与入库规范》校验元数据。通过后自动解析、切片、向量化并进入待审核（管理员可勾选直接发布）。
+    </div>
+    <form id="uploadForm" class="upload-form">
+        <div class="form-row">
+            <label>文件 <span class="req">*</span>
+                <input type="file" name="file" id="file" required>
+            </label>
+        </div>
+        <div class="form-row">
+            <label>标题（[地域/主体]+[时间]+[主题]+[类型]）<span class="req">*</span>
+                <input type="text" name="title" id="title" placeholder="如：2025国家高值耗材集采政策解读" required>
+            </label>
+        </div>
+        <div class="form-row two">
+            <label>一级分类 <span class="req">*</span>
+                <select name="category_l1" id="category_l1" required>
+                    <option value="">请选择</option>
+                    {% for code, name in CATEGORIES_L1.items() %}
+                    <option value="{{ code }}">{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>二级分类
+                <input type="text" name="category_l2" id="category_l2" placeholder="可选，如 POLICY-NATIONAL">
+            </label>
+        </div>
+        <div class="form-row two">
+            <label>归属部门 <span class="req">*</span>
+                <select name="department_id" id="department_id" required>
+                    <option value="">请选择</option>
+                    {% for d in departments %}
+                    <option value="{{ d.id }}">{{ d.name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>密级 <span class="req">*</span>
+                <select name="security_level" id="security_level" required>
+                    {% for code, name in SECURITY_LEVELS.items() %}
+                    <option value="{{ code }}">{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+        </div>
+        <div class="form-row two">
+            <label>质量等级
+                <select name="quality_level" id="quality_level">
+                    {% for code, name in QUALITY_LEVELS.items() %}
+                    <option value="{{ code }}">{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>责任人 <span class="req">*</span>
+                <input type="text" name="owner" id="owner" placeholder="具体人名，便于复审对接" required>
+            </label>
+        </div>
+        <div class="form-row two">
+            <label>生效日期（YYYY-MM-DD）
+                <input type="text" name="effective_date" id="effective_date" placeholder="如 2025-06-12">
+            </label>
+            <label>失效日期（可选）
+                <input type="text" name="expire_date" id="expire_date" placeholder="如 2026-06-12">
+            </label>
+        </div>
+        <div class="form-row">
+            <label>来源（政策类必填）
+                <input type="text" name="source" id="source" placeholder="发文机构或原文 URL">
+            </label>
+        </div>
+        <div class="form-row">
+            <label>摘要（留空自动生成）
+                <textarea name="summary" id="summary" rows="2" placeholder="一句话概括，便于检索与浏览"></textarea>
+            </label>
+        </div>
+        <div class="form-row">
+            <label class="checkbox">
+                <input type="checkbox" name="auto_publish" id="auto_publish"> 跳过审核直接发布（仅管理员/审核员）
+            </label>
+        </div>
+        <div id="uploadMsg" class="upload-msg"></div>
+        <button type="submit" class="btn btn-primary">提交入库</button>
+    </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 入库表单提交：用 FormData 上传文件 + 元数据
+document.getElementById('uploadForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const msg = document.getElementById('uploadMsg');
+    msg.className = 'upload-msg'; msg.textContent = '入库中…'; msg.style.color = '';
+
+    const fd = new FormData();
+    fd.append('file', document.getElementById('file').files[0]);
+    ['title','category_l1','category_l2','department_id','security_level','quality_level','owner','effective_date','expire_date','source','summary'].forEach(k => {
+        fd.append(k, document.getElementById(k).value);
+    });
+    if (document.getElementById('auto_publish').checked) fd.append('auto_publish', '1');
+
+    try {
+        const resp = await fetch('/api/upload', {method: 'POST', body: fd});
+        const data = await resp.json();
+        if (data.ok) {
+            msg.className = 'upload-msg ok';
+            msg.textContent = data.message;
+            e.target.reset();  // 成功后清空表单
+        } else {
+            msg.className = 'upload-msg err';
+            // 把校验错误逐条列出，方便用户一次改完
+            const errs = (data.errors || []).join('；');
+            msg.textContent = (data.message || '入库失败') + (errs ? '：' + errs : '');
+        }
+    } catch (ex) {
+        msg.className = 'upload-msg err';
+        msg.textContent = '网络错误：' + ex.message;
+    }
+});
+</script>
+{% endblock %}

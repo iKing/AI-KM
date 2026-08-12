@@ -1,0 +1,316 @@
+{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+{% block title %}管理后台 · AI-KM{% endblock %}
+{% block page_title %}管理后台{% endblock %}
+{% block content %}
+<div class="admin">
+    <div class="admin-tabs">
+        <span class="tab active" data-tab="users" onclick="switchTab(this)">用户管理</span>
+        <span class="tab" data-tab="apikeys" onclick="switchTab(this)">API 密钥</span>
+        <span class="tab" data-tab="audit" onclick="switchTab(this)">审计日志</span>
+        <span class="tab" data-tab="eval" onclick="switchTab(this)">检索评测</span>
+        <span class="tab" data-tab="index" onclick="switchTab(this)">索引管理</span>
+        <span class="tab" data-tab="config" onclick="switchTab(this)">系统配置</span>
+    </div>
+
+    <div class="admin-body">
+        {# 用户管理 #}
+        <section class="tab-panel" id="tab-users">
+            <div class="panel">
+                <h3>新建用户</h3>
+                <div class="form-row two">
+                    <input id="u_username" placeholder="登录名">
+                    <input id="u_display" placeholder="显示名">
+                </div>
+                <div class="form-row two">
+                    <select id="u_role">
+                        <option value="user">普通用户</option>
+                        <option value="contributor">知识贡献者</option>
+                        <option value="reviewer">知识审核员</option>
+                        <option value="admin">系统管理员</option>
+                    </select>
+                    <input id="u_dept" placeholder="部门ID（可选）" type="number">
+                </div>
+                <div class="form-row two">
+                    <select id="u_sec">
+                        {% for code, name in SECURITY_LEVELS.items() %}
+                        <option value="{{ code }}">{{ name }}</option>
+                        {% endfor %}
+                    </select>
+                    <label class="checkbox"><input type="checkbox" id="u_cross"> 跨部门查看</label>
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="createUser()">创建</button>
+                <span id="u_msg" class="inline-msg"></span>
+            </div>
+            <div class="panel">
+                <h3>用户列表</h3>
+                <table class="tbl" id="userTable"><thead><tr>
+                    <th>ID</th><th>账号</th><th>显示名</th><th>角色</th><th>部门</th><th>密级</th><th>状态</th><th>操作</th>
+                </tr></thead><tbody></tbody></table>
+            </div>
+        </section>
+
+        {# API 密钥 #}
+        <section class="tab-panel" id="tab-apikeys" style="display:none">
+            <div class="panel">
+                <h3>新建密钥</h3>
+                <div class="form-row two">
+                    <input id="k_name" placeholder="密钥用途，如：政策解读场景">
+                    <button class="btn btn-primary btn-sm" onclick="createKey()">创建</button>
+                </div>
+                <div id="k_msg" class="inline-msg"></div>
+            </div>
+            <div class="panel">
+                <h3>密钥列表</h3>
+                <table class="tbl" id="keyTable"><thead><tr>
+                    <th>ID</th><th>名称</th><th>前缀</th><th>状态</th><th>调用次数</th><th>操作</th>
+                </tr></thead><tbody></tbody></table>
+            </div>
+        </section>
+
+        {# 审计日志 #}
+        <section class="tab-panel" id="tab-audit" style="display:none">
+            <div class="panel">
+                <h3>审计日志查询</h3>
+                <div class="form-row two">
+                    <select id="a_action"><option value="">全部动作</option>
+                        {% for code, name in audit.ACTIONS.items() %}
+                        <option value="{{ code }}">{{ name }}</option>
+                        {% endfor %}
+                    </select>
+                    <input id="a_keyword" placeholder="关键词（用户名/详情）">
+                </div>
+                <div class="form-row two">
+                    <input id="a_from" placeholder="起始日期 2026-01-01">
+                    <input id="a_to" placeholder="结束日期 2026-12-31">
+                </div>
+                <div class="form-row two">
+                    <label class="checkbox"><input type="checkbox" id="a_sens"> 仅涉密</label>
+                    <div>
+                        <button class="btn btn-primary btn-sm" onclick="loadAudit()">查询</button>
+                        <a class="btn btn-ghost btn-sm" id="auditExport" href="#">导出CSV</a>
+                    </div>
+                </div>
+            </div>
+            <div class="panel">
+                <table class="tbl" id="auditTable"><thead><tr>
+                    <th>时间</th><th>用户</th><th>IP</th><th>动作</th><th>对象</th><th>结果</th><th>耗时</th><th>涉密</th>
+                </tr></thead><tbody></tbody></table>
+            </div>
+        </section>
+
+        {# 检索评测 #}
+        <section class="tab-panel" id="tab-eval" style="display:none">
+            <div class="panel">
+                <h3>运行检索准确率评测</h3>
+                <div class="form-row two">
+                    <select id="e_mode">
+                        <option value="hybrid">混合检索</option>
+                        <option value="bm25">仅关键词</option>
+                        <option value="vector">仅语义</option>
+                    </select>
+                    <input id="e_k" type="number" value="5" placeholder="K 值（默认5）">
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="runEval()">运行评测</button>
+                <span id="e_msg" class="inline-msg"></span>
+                <div class="target-box" id="evalTarget"></div>
+            </div>
+            <div class="panel">
+                <h3>评测历史</h3>
+                <table class="tbl" id="evalTable"><thead><tr>
+                    <th>ID</th><th>时间</th><th>模式</th><th>K</th><th>总用例</th><th>通过</th><th>Recall@K</th><th>MRR</th><th>达标</th>
+                </tr></thead><tbody></tbody></table>
+            </div>
+        </section>
+
+        {# 索引管理 #}
+        <section class="tab-panel" id="tab-index" style="display:none">
+            <div class="panel">
+                <h3>索引管理</h3>
+                <p class="muted">切换 Embedding 模型后必须"全量重建"；平时用"补缺失向量"修复入库时向量化失败的文档。</p>
+                <button class="btn btn-primary btn-sm" onclick="reindex('missing')">补缺失向量</button>
+                <button class="btn btn-warn btn-sm" onclick="reindex('all')">全量重建</button>
+                <span id="i_msg" class="inline-msg"></span>
+            </div>
+        </section>
+
+        {# 系统配置 #}
+        <section class="tab-panel" id="tab-config" style="display:none">
+            <div class="panel">
+                <h3>连通性测试</h3>
+                <button class="btn btn-primary btn-sm" onclick="testHealth()">测试 LLM / Embedding</button>
+                <div id="healthBox" class="health-box"></div>
+            </div>
+            <div class="panel">
+                <h3>运行时配置</h3>
+                <div class="kvs" id="configBox"><div class="loading">加载中…</div></div>
+            </div>
+        </section>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 切换 Tab
+function switchTab(el) {
+    document.querySelectorAll('.admin-tabs .tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
+    document.getElementById('tab-' + el.dataset.tab).style.display = 'block';
+    // 进入各 Tab 时加载对应数据
+    const map = {users: loadUsers, apikeys: loadKeys, audit: loadAudit, eval: loadEvalRuns, config: loadConfig};
+    if (map[el.dataset.tab]) map[el.dataset.tab]();
+}
+
+// ---------- 用户管理 ----------
+async function loadUsers() {
+    const r = await fetch('/api/admin/users');
+    const d = await r.json();
+    if (!d.ok) return;
+    const tb = document.querySelector('#userTable tbody');
+    tb.innerHTML = d.users.map(u => `
+        <tr>
+            <td>${u.id}</td><td>${escapeHtml(u.username)}</td><td>${escapeHtml(u.display_name)}</td>
+            <td>${u.role}</td><td>${u.dept_name || '—'}</td>
+            <td>${u.max_security}</td>
+            <td>${u.active ? '启用' : '停用'}</td>
+            <td>
+                <button class="btn btn-sm" onclick="resetPwd(${u.id})">重置密码</button>
+                <button class="btn btn-sm" onclick="toggleUser(${u.id})">${u.active ? '停用' : '启用'}</button>
+            </td>
+        </tr>`).join('');
+}
+async function createUser() {
+    const body = {
+        username: document.getElementById('u_username').value.trim(),
+        display_name: document.getElementById('u_display').value.trim(),
+        role: document.getElementById('u_role').value,
+        department_id: document.getElementById('u_dept').value || null,
+        max_security: document.getElementById('u_sec').value,
+        cross_dept: document.getElementById('u_cross').checked,
+    };
+    const r = await fetch('/api/admin/users', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const d = await r.json();
+    const msg = document.getElementById('u_msg');
+    if (d.ok) { msg.style.color = 'var(--ok)'; msg.textContent = '创建成功，初始密码：' + d.password; loadUsers(); }
+    else { msg.style.color = 'var(--err)'; msg.textContent = d.error; }
+}
+async function resetPwd(id) {
+    if (!confirm('确定重置该用户密码？')) return;
+    const r = await fetch('/api/admin/users/' + id + '/reset', {method:'POST'});
+    const d = await r.json();
+    alert(d.ok ? '新密码：' + d.password : (d.error || '失败'));
+}
+async function toggleUser(id) {
+    await fetch('/api/admin/users/' + id + '/toggle', {method:'POST'});
+    loadUsers();
+}
+
+// ---------- API 密钥 ----------
+async function loadKeys() {
+    const r = await fetch('/api/admin/apikeys');
+    const d = await r.json();
+    if (!d.ok) return;
+    const tb = document.querySelector('#keyTable tbody');
+    tb.innerHTML = d.keys.map(k => `
+        <tr><td>${k.id}</td><td>${escapeHtml(k.name)}</td><td>${k.key_prefix}</td>
+        <td>${k.active ? '有效' : '已吊销'}</td><td>${k.call_count}</td>
+        <td>${k.active ? `<button class="btn btn-sm" onclick="revokeKey(${k.id})">吊销</button>` : '—'}</td></tr>`).join('');
+}
+async function createKey() {
+    const name = document.getElementById('k_name').value.trim();
+    if (!name) { document.getElementById('k_msg').textContent = '请填写名称'; return; }
+    const r = await fetch('/api/admin/apikeys', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+    const d = await r.json();
+    const msg = document.getElementById('k_msg');
+    if (d.ok) { msg.style.color = 'var(--ok)'; msg.textContent = '密钥已生成（仅此一次）：' + d.raw_key; loadKeys(); document.getElementById('k_name').value=''; }
+    else { msg.style.color = 'var(--err)'; msg.textContent = d.error; }
+}
+async function revokeKey(id) {
+    if (!confirm('确定吊销该密钥？')) return;
+    await fetch('/api/admin/apikeys/' + id + '/revoke', {method:'POST'});
+    loadKeys();
+}
+
+// ---------- 审计日志 ----------
+async function loadAudit() {
+    const params = new URLSearchParams();
+    if (document.getElementById('a_action').value) params.set('action', document.getElementById('a_action').value);
+    if (document.getElementById('a_keyword').value) params.set('keyword', document.getElementById('a_keyword').value);
+    if (document.getElementById('a_from').value) params.set('date_from', document.getElementById('a_from').value);
+    if (document.getElementById('a_to').value) params.set('date_to', document.getElementById('a_to').value);
+    if (document.getElementById('a_sens').checked) params.set('sensitive', '1');
+    // 更新导出链接
+    document.getElementById('auditExport').href = '/api/admin/audit/export?' + params.toString();
+    const r = await fetch('/api/admin/audit?' + params.toString());
+    const d = await r.json();
+    if (!d.ok) return;
+    const tb = document.querySelector('#auditTable tbody');
+    tb.innerHTML = d.logs.map(l => `
+        <tr><td>${l.ts}</td><td>${escapeHtml(l.username || '—')}</td><td>${l.ip || '—'}</td>
+        <td>${l.action_name}</td><td>${l.target_type || '—'}:${l.target_id || ''}</td>
+        <td>${l.result}</td><td>${l.cost_ms}</td><td>${l.sensitive ? '是' : '否'}</td></tr>`).join('');
+}
+
+// ---------- 评测 ----------
+async function runEval() {
+    const body = {mode: document.getElementById('e_mode').value, top_k: parseInt(document.getElementById('e_k').value || '5')};
+    const msg = document.getElementById('e_msg');
+    msg.style.color = ''; msg.textContent = '评测中（可能较慢）…';
+    const r = await fetch('/api/admin/eval/run', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const d = await r.json();
+    if (d.ok) {
+        const ok = d.meet_target ? '✅ 达标 (≥90%)' : '⚠️ 未达标 (<90%)';
+        msg.style.color = d.meet_target ? 'var(--ok)' : 'var(--warn)';
+        msg.textContent = `Recall@${body.top_k}=${d.recall_at_k} MRR=${d.mrr} ${ok}`;
+        loadEvalRuns();
+    } else {
+        msg.style.color = 'var(--err)'; msg.textContent = d.message || '评测失败';
+    }
+}
+async function loadEvalRuns() {
+    const r = await fetch('/api/admin/eval/runs');
+    const d = await r.json();
+    if (!d.ok) return;
+    const tb = document.querySelector('#evalTable tbody');
+    tb.innerHTML = d.runs.map(v => `
+        <tr><td>${v.id}</td><td>${v.finished_at}</td><td>${v.mode}</td><td>${v.top_k}</td>
+        <td>${v.total}</td><td>${v.passed}</td><td>${v.recall_at_k}</td><td>${v.mrr}</td>
+        <td>${v.recall_at_k >= 0.9 ? '✅' : '⚠️'}</td></tr>`).join('');
+}
+
+// ---------- 索引管理 ----------
+async function reindex(scope) {
+    if (!confirm(scope === 'all' ? '全量重建将清空所有切片与向量后重新生成，耗时较长，确定？' : '开始补充缺失向量？')) return;
+    const msg = document.getElementById('i_msg');
+    msg.textContent = '处理中…';
+    const r = await fetch('/api/admin/reindex', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({scope})});
+    const d = await r.json();
+    msg.style.color = 'var(--ok)';
+    msg.textContent = `完成：成功 ${d.success||0}，失败 ${d.failed||0}`;
+}
+
+// ---------- 配置 ----------
+async function loadConfig() {
+    const r = await fetch('/api/admin/config');
+    const d = await r.json();
+    if (!d.ok) return;
+    const box = document.getElementById('configBox');
+    box.innerHTML = Object.entries(d.config).map(([k, v]) =>
+        `<div class="kv"><span>${k}</span><b>${escapeHtml(String(v))}</b></div>`).join('');
+}
+async function testHealth() {
+    const box = document.getElementById('healthBox');
+    box.innerHTML = '测试中…';
+    const r = await fetch('/api/admin/config/health', {method:'POST'});
+    const d = await r.json();
+    box.innerHTML = `
+        <div class="health-item ${d.llm.ok ? 'ok':'err'}">LLM：${d.llm.ok ? '✅' : '❌'} ${escapeHtml(d.llm.message)}</div>
+        <div class="health-item ${d.embedding.ok ? 'ok':'err'}">Embedding：${d.embedding.ok ? '✅' : '❌'} ${escapeHtml(d.embedding.message)}</div>`;
+}
+
+// 进入页面默认加载用户
+loadUsers();
+</script>
+{% endblock %}

@@ -1,0 +1,40 @@
+# AI-KM 知识管理平台 · Git 忽略清单
+
+# ---- 密钥与环境（含真实 API Key，严禁入库）----
+.env
+.env.*
+!.env.example
+
+# ---- WorkBuddy 内部数据（含服务器 IP / 密钥记忆，严禁入库）----
+.workbuddy/
+
+# ---- 运行时数据（数据库 / 上传 / 索引）----
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ---- Python 缓存 / 构建产物 ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# ---- 本地开发临时文件 ----
+*.log
+/tmp/
+
+# ---- 测试产物 ----
+.pytest_cache/
+
+# ---- 系统 / 编辑器 ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ---- 版本控制 ----
+.git/

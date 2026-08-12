@@ -1,0 +1,100 @@
+{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+{% block title %}{{ doc.title }} · 内联画图{% endblock %}
+{% block page_title %}内联画图 · diagrams.net{% endblock %}
+{% block content %}
+<div class="draw-wrap">
+    <div class="draw-head">
+        <h2>🖊️ 内联画图：{{ doc.title }}</h2>
+        <div class="draw-tools">
+            {# 选择已有图或新建；编辑模式才显示保存提示 #}
+            <select id="diagramSel" class="tag-input">
+                <option value="0">＋ 新建一张图</option>
+                {% for g in diagrams %}
+                <option value="{{ g.id }}">{{ g.title }}</option>
+                {% endfor %}
+            </select>
+            <input id="diagramTitle" class="tag-input" placeholder="图标题" value="未命名图" maxlength="100" />
+            {% if can_edit %}
+            <span class="muted">在右侧编辑器里用 Ctrl/Cmd+S 或菜单「保存」即可存回本系统</span>
+            <a class="btn btn-sm" href="/doc/{{ doc.id }}">← 返回文档</a>
+            {% else %}
+            <span class="muted">只读查看模式</span>
+            <a class="btn btn-sm" href="/doc/{{ doc.id }}">← 返回文档</a>
+            {% endif %}
+        </div>
+    </div>
+
+    {# diagrams.net 嵌入区：编辑用 embed，查看用 viewer #}
+    <iframe id="drawFrame" class="draw-frame"
+            src="{% if can_edit %}https://embed.diagrams.net/?proto=json&spin=1&ui=min&saveAndExit=1{% else %}https://viewer.diagrams.net/?proto=json&ui=min{% endif %}">
+    </iframe>
+
+    <div id="saveTip" class="draw-tip"></div>
+</div>
+
+<script>
+// diagrams.net 内联画图交互（postMessage 协议，proto=json）
+const DOC_ID = {{ doc.id }};            // 文档 ID
+const diagrams = {{ diagrams | tojson | safe }};  // 已有图列表（含 xml）
+const canEdit = {{ "true" if can_edit else "false" }};  // 是否可编辑
+const frame = document.getElementById("drawFrame");  // 嵌入 iframe
+const tip = document.getElementById("saveTip");       // 保存提示条
+
+let currentXml = "";   // 当前正在编辑的图 XML
+let currentId = 0;     // 当前图 ID（0 表示新建）
+
+// 切换图：加载选中图的 XML 到编辑器
+function selectDiagram(id) {
+    currentId = parseInt(id, 10) || 0;  // 解析 ID
+    const g = diagrams.find(x => x.id === currentId);  // 找到对应图
+    currentXml = g ? g.diagram_xml : "";  // 取 XML（新建则为空）
+    document.getElementById("diagramTitle").value = g ? g.title : "未命名图";  // 标题回填
+    // 等 iframe 发 init 后由 onMessage 自动 load；这里先存，init 时再用
+}
+
+// 接收 diagrams.net 的消息
+window.addEventListener("message", (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch (_) { return; }  // 非 JSON 忽略
+    // 编辑器初始化完成 → 把当前 XML 灌进去
+    if (msg.event === "init") {
+        frame.contentWindow.postMessage(JSON.stringify({action: "load", xml: currentXml}), "*");
+    }
+    // 保存 / 退出：把 XML 存回本系统
+    if ((msg.event === "save" || msg.event === "exit") && canEdit) {
+        saveDiagram(msg.xml || currentXml);  // 调保存
+        if (msg.event === "exit") setTimeout(() => location.href = "/doc/" + DOC_ID, 600);  // 退出回文档
+    }
+});
+
+// 调用后端保存图 XML
+async function saveDiagram(xml) {
+    if (!xml) return;  // 空图不存
+    const title = (document.getElementById("diagramTitle").value || "未命名图").trim();
+    const url = currentId
+        ? `/api/documents/${DOC_ID}/diagrams/${currentId}`   // 已有图 → 更新
+        : `/api/documents/${DOC_ID}/diagrams`;               // 新图 → 新建
+    const method = currentId ? "PUT" : "POST";
+    const r = await fetch(url, {
+        method,
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({diagram_xml: xml, title}),  // 提交 XML 与标题
+    });
+    const d = await r.json();
+    if (d.ok) {
+        tip.textContent = "✅ 已保存到本系统";  // 成功提示
+        tip.className = "draw-tip ok";
+        if (!currentId && d.diagram_id) { currentId = d.diagram_id; }  // 新建后记录 ID
+        setTimeout(() => location.reload(), 800);  // 刷新以更新图列表
+    } else {
+        tip.textContent = "❌ 保存失败：" + (d.error || "");  // 失败提示
+        tip.className = "draw-tip err";
+    }
+}
+
+// 下拉切换图
+document.getElementById("diagramSel").addEventListener("change", (e) => selectDiagram(e.target.value));
+selectDiagram(0);  // 默认新建
+</script>
+{% endblock %}

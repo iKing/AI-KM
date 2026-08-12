@@ -1,0 +1,67 @@
+{# -*- coding: utf-8 -*-}
+{# 基础布局模板：所有页面继承它，提供侧边导航 + 顶栏 + 内容区 #}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    {# 移动端适配 #}
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}AI-KM 知识管理平台{% endblock %}</title>
+    {# 引入统一样式表 #}
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="layout">
+    {# 侧边导航：根据角色显示不同菜单项 #}
+    <aside class="sidebar">
+        <div class="logo">晓梦庄子<br><span>AI-KM 知识库</span></div>
+        <nav class="nav">
+            <a class="nav-item" href="/search">🔍 知识检索</a>
+            <a class="nav-item" href="/spaces">📚 知识树</a>
+            <a class="nav-item" href="/ask">💬 AI 问答</a>
+            {# 仅可贡献知识的角色显示入库入口 #}
+            {% if user and user.role in ('admin','reviewer','contributor') %}
+            <a class="nav-item" href="/upload">📥 知识入库</a>
+            {% endif %}
+            {# 仅审核角色显示审核入口 #}
+            {% if user and user.role in ('admin','reviewer') %}
+            <a class="nav-item" href="/review">✅ 知识审核</a>
+            {% endif %}
+            <a class="nav-item" href="/dashboard">📊 效能看板</a>
+            {# 任意登录用户可访问「我的安全」（MFA 开通）、「修改密码」与「API 文档」 #}
+            {% if user %}
+            <a class="nav-item" href="/change-password">🔑 修改密码</a>
+            <a class="nav-item" href="/mfa/setup">🔐 我的安全</a>
+            <a class="nav-item" href="/api/v1/docs">📖 API 文档</a>
+            {% endif %}
+            {# 仅管理员显示管理后台 #}
+            {% if user and user.role == 'admin' %}
+            <a class="nav-item" href="/admin">⚙️ 管理后台</a>
+            <a class="nav-item" href="/audit">🧾 审计日志</a>
+            {% endif %}
+        </nav>
+    </aside>
+
+    <main class="main">
+        {# 顶栏：品牌 + 当前用户 #}
+        <header class="topbar">
+            <div class="topbar-title">{% block page_title %}知识管理平台{% endblock %}</div>
+            <div class="user-box">
+                {% if user %}
+                <span class="user-name">{{ user.display_name }}</span>
+                <span class="user-role">{{ ROLES.get(user.role, user.role) }}</span>
+                <a class="logout" href="/logout">退出</a>
+                {% endif %}
+            </div>
+        </header>
+        {# 内容区：各页面填充 #}
+        <section class="content">
+            {% block content %}{% endblock %}
+        </section>
+    </main>
+</div>
+{# 全局 JS #}
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,161 @@
+{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+{% block title %}AI 问答 · AI-KM{% endblock %}
+{% block page_title %}AI 问答{% endblock %}
+{% block content %}
+<div class="chat-container">
+    <div class="chat-side">
+        <button class="btn btn-ghost btn-block" onclick="newChat()">+ 新建对话</button>
+        <div id="sessionList" class="session-list"></div>
+    </div>
+    <div class="chat-main">
+        <div id="chatMessages" class="chat-messages">
+            <div class="chat-empty">向知识库提问，AI 将基于已入库内容作答并标注来源。<br>例如：「集采政策对医院耗材采购流程有什么影响？」</div>
+        </div>
+        <div class="chat-input-bar">
+            <label class="conf-toggle" title="仅当您有『机密』密级权限时生效">
+                <input type="checkbox" id="includeConf"> 含机密内容
+            </label>
+            <textarea id="askInput" class="chat-input" placeholder="输入您的问题，Enter 发送，Shift+Enter 换行" rows="2"></textarea>
+            <button class="btn btn-primary" onclick="sendAsk()">发送</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentSessionId = null;  // 当前会话 ID
+let answering = false;        // 是否正在生成（防止重复发送）
+
+// 新建对话：清空会话与消息区
+function newChat() {
+    currentSessionId = null;
+    document.getElementById('chatMessages').innerHTML = '<div class="chat-empty">新对话已开始，请输入问题。</div>';
+    document.getElementById('sessionList').querySelectorAll('.active').forEach(e => e.classList.remove('active'));
+}
+
+// 加载历史会话列表
+async function loadSessions() {
+    try {
+        const r = await fetch('/api/chat/sessions');
+        const d = await r.json();
+        if (d.ok) {
+            const el = document.getElementById('sessionList');
+            el.innerHTML = d.sessions.map(s => `
+                <div class="session-item" data-id="${s.id}" onclick="openSession(${s.id})">
+                    <div class="session-title">${escapeHtml(s.title)}</div>
+                    <div class="session-sub">${s.msg_count} 条 · ${s.updated_at}</div>
+                </div>`).join('');
+        }
+    } catch (e) {}
+}
+
+// 打开某个历史会话
+async function openSession(id) {
+    currentSessionId = id;
+    document.querySelectorAll('.session-item').forEach(e => e.classList.toggle('active', e.dataset.id == id));
+    try {
+        const r = await fetch('/api/chat/sessions/' + id);
+        const d = await r.json();
+        const box = document.getElementById('chatMessages');
+        if (!d.messages.length) { box.innerHTML = '<div class="chat-empty">该会话暂无消息</div>'; return; }
+        box.innerHTML = d.messages.map(renderMsg).join('');
+        box.scrollTop = box.scrollHeight;
+    } catch (e) {}
+}
+
+// 渲染单条消息
+function renderMsg(m) {
+    if (m.role === 'user') {
+        return `<div class="msg msg-user"><div class="msg-bubble">${escapeHtml(m.content)}</div></div>`;
+    }
+    // 助手消息：正文 + 引用
+    let cites = '';
+    if (m.citations && m.citations.length) {
+        cites = '<div class="cites">' + m.citations.map(c => `
+            <a class="cite" href="/doc/${c.doc_id}">[${c.index}] ${escapeHtml(c.title)}</a>`).join('') + '</div>';
+    }
+    return `<div class="msg msg-bot"><div class="msg-bubble">${escapeHtml(m.content)}</div>${cites}</div>`;
+}
+
+// 发送问题（流式）
+async function sendAsk() {
+    if (answering) return;  // 正在生成时忽略
+    const input = document.getElementById('askInput');
+    const question = input.value.trim();
+    if (!question) return;
+    input.value = '';
+
+    const box = document.getElementById('chatMessages');
+    if (box.querySelector('.chat-empty')) box.innerHTML = '';  // 清掉空态提示
+    // 追加用户问题气泡
+    box.insertAdjacentHTML('beforeend', renderMsg({role: 'user', content: question}));
+    // 追加一个空的助手气泡，流式填充
+    const botId = 'bot-' + Date.now();
+    box.insertAdjacentHTML('beforeend',
+        `<div class="msg msg-bot" id="${botId}"><div class="msg-bubble"></div><div class="cites"></div></div>`);
+    box.scrollTop = box.scrollHeight;
+
+    answering = true;
+    const botEl = document.getElementById(botId);
+    let citations = [];
+    let fullText = '';
+
+    // 用 fetch + 流式读取 SSE
+    try {
+        const resp = await fetch('/api/ask', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                question,
+                session_id: currentSessionId,
+                include_confidential: document.getElementById('includeConf').checked,
+            }),
+        });
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const {done, value} = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, {stream: true});
+            // 按 SSE 事件边界拆分
+            const parts = buffer.split('\n\n');
+            buffer = parts.pop();  // 最后一段可能不完整，留到下次
+            for (const part of parts) {
+                if (!part.startsWith('data:')) continue;
+                const json = part.slice(5).trim();
+                if (!json) continue;
+                const ev = JSON.parse(json);
+                if (ev.type === 'citations') {
+                    citations = ev.data;
+                } else if (ev.type === 'content') {
+                    fullText += ev.data;
+                    botEl.querySelector('.msg-bubble').textContent = fullText;
+                    box.scrollTop = box.scrollHeight;
+                } else if (ev.type === 'done') {
+                    currentSessionId = ev.data.session_id || currentSessionId;
+                    // 渲染引用
+                    if (citations.length) {
+                        botEl.querySelector('.cites').innerHTML = citations.map(c =>
+                            `<a class="cite" href="/doc/${c.doc_id}">[${c.index}] ${escapeHtml(c.title)}</a>`).join('');
+                    }
+                    loadSessions();  // 刷新会话列表
+                }
+            }
+        }
+    } catch (ex) {
+        botEl.querySelector('.msg-bubble').textContent = '出错了：' + ex.message;
+    } finally {
+        answering = false;
+    }
+}
+
+// Enter 发送，Shift+Enter 换行
+document.getElementById('askInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAsk(); }
+});
+loadSessions();
+</script>
+{% endblock %}

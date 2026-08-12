@@ -1,0 +1,28 @@
+# AI-KM 知识管理平台 · Docker Compose 一键部署
+# 用法：
+#   1. 复制 .env.example 为 .env 并填入真实密钥（尤其 AIKM_SECRET_KEY）
+#   2. docker compose up -d --build
+#   3. 访问 http://<服务器IP>:5200
+version: "3.8"
+
+services:
+  aikm:
+    build: .                                  # 基于本地 Dockerfile 构建
+    container_name: aikm
+    restart: unless-stopped                   # 异常退出自动重启
+    ports:
+      - "5200:5200"                           # 宿主机端口:容器端口
+    env_file:
+      - .env                                  # 从 .env 注入所有配置（含密钥，绝不进镜像）
+    environment:
+      # 容器内以非 root 用户 aikm(uid 10001) 运行；如需固定时区可在此加 TZ
+      TZ: "Asia/Shanghai"
+    volumes:
+      # 命名卷持久化数据与索引：容器重建/升级不丢数据，且卷权限与容器内 aikm 用户一致（无 UID 错配问题）
+      - aikm_data:/app/data
+    # 生产建议：在前方加 Nginx 反代并配置 HTTPS（见 docs/部署手册.md），
+    # 同时把 .env 的 AIKM_HTTPS 设为 true 以启用 Secure Cookie 与 HSTS。
+    # 内网快速试用也可直接暴露 5200 端口（纯 HTTP），但账号与数据明文传输，仅限可信局域网。
+
+volumes:
+  aikm_data:                                  # 命名卷：首次启动由镜像 /app/data 初始化（aikm 属主）
