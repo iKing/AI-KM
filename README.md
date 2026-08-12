@@ -5,9 +5,9 @@
 支撑公司 SG1（知识资产化）与 SG2（AI 生产力重构）战略落地。
 
 > **当前版本 v1.0.0**（2026-08-12 基线）：完整功能 + 文档 + 测试（183/183 验证通过），可生产级替代 BookStack。
-> 内部专有资产，请勿外传。
+> 仓库已开源（public）；`main` 分支启用分支保护：禁止直推、需 1 人 PR 审核、禁 force push / 删除。
 
-![version](https://img.shields.io/badge/version-v1.0.0-blue) ![status](https://img.shields.io/badge/status-生产可用-brightgreen) ![scope](https://img.shields.io/badge/scope-内部专有-red)
+![version](https://img.shields.io/badge/version-v1.0.0-blue) ![status](https://img.shields.io/badge/status-生产可用-brightgreen) ![scope](https://img.shields.io/badge/scope-开源公开-green) ![protected](https://img.shields.io/badge/main-分支保护-orange)
 
 ---
 

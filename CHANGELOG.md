@@ -35,6 +35,10 @@
 ### 验证（Verified）
 - 自动化验证套件 6 个，共 **183/183 全通过**：P1 标签/引用/锚点 25、P1 导出/评论/审计 36、P2 版本 26、P2 综合 48、富文本 25、完整版三项补齐 23。
 
+### 仓库治理（Repo Governance）
+- 仓库自私有转为 **public（开源）**；公开前做彻底密钥扫描，确认入库文件无真实 API Key / 私钥 / 内网 API 凭证（仅 `.env.example` 占位与演示账号 `Admin@123456`/`Demo@123456`）。
+- `main` 分支启用 **分支保护**：`enforce_admins=true`、需 1 人 PR 审核、`allow_force_pushes=false`、`allow_deletions=false`；后续任何改动一律走 `feature/*` 分支 + PR 合并。
+
 ---
 
 ## 待办（后续版本规划，见 GitHub Milestone）
