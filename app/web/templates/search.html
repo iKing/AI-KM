@@ -77,6 +77,23 @@ async function loadTags() {
 }
 loadTags();
 
+// 页面加载时若 URL 带了查询/分类参数（如从首页分类卡片跳入），自动预填并执行检索。
+// 这样"点分类卡片"能直接看到该分类的文档列表，而不是停在空白检索页（之前的主要痛点）。
+function initFromUrl() {
+    const p = new URLSearchParams(location.search);            // 解析当前 URL 查询串
+    const q = p.get('q'), cat = p.get('category_l1'),         // 搜索词 + 一级分类
+          sec = p.get('security_level'), tag = p.get('tag'),   // 密级 + 标签
+          dept = p.get('department_id');                       // 部门
+    if (q) document.getElementById('searchInput').value = q;   // 回填搜索框
+    if (cat) document.getElementById('filterCat').value = cat; // 回填分类下拉
+    if (sec) document.getElementById('filterSec').value = sec; // 回填密级下拉
+    if (tag) document.getElementById('filterTag').value = tag; // 回填标签下拉
+    if (dept) document.getElementById('filterDept').value = dept; // 回填部门下拉
+    // 只要带了任意过滤参数就自动检索一次，让用户进来就有内容
+    if (q || cat || sec || tag || dept) doSearch();
+}
+initFromUrl();   // 立即执行：处理从首页/导航带参跳转进来的场景
+
 // 执行检索
 async function doSearch() {
     const q = document.getElementById('searchInput').value.trim();
@@ -120,7 +137,7 @@ function renderResults(results) {
                 <span class="badge">${r.category_name}</span>
                 <span class="badge">${r.quality_name}</span>
             </div>
-            <div class="result-meta">${r.department} · 责任人 ${r.owner || '—'} · 相关度 ${r.score}</div>
+            <div class="result-meta">${r.department} · 责任人 ${r.owner || '—'} · ${r.browse ? '📁 文档' : '相关度 ' + r.score}</div>
             <div class="result-body">${r.highlight || escapeHtml(r.content.slice(0, 200))}</div>
             <div class="result-path">${r.heading_path || ''}</div>
         </div>
