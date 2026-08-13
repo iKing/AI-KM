@@ -1,77 +1,151 @@
 {# -*- coding: utf-8 -*- #}
 {% extends "base.html" %}
-{% block title %}效能看板 · AI-KM{% endblock %}
-{% block page_title %}效能看板{% endblock %}
+{% block title %}知识库工作台 · AI-KM{% endblock %}
+{% block page_title %}知识库工作台{% endblock %}
 {% block content %}
-<div id="dash" class="dash">
-    <div class="loading">加载中…</div>
+<div id="kb" class="kb">
+    <div class="loading">正在加载知识库工作台…</div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-// 加载看板数据并渲染
-async function loadDashboard() {
+// ============ 知识库工作台渲染逻辑 ============
+// 工作台数据全部来自 /api/home 一次聚合返回，避免首页发起多次请求。
+
+// 页面加载即拉取工作台数据
+async function loadHome() {
     try {
-        const r = await fetch('/api/dashboard/stats');
+        const r = await fetch('/api/home');
         const d = await r.json();
-        if (!d.ok) { document.getElementById('dash').innerHTML = '<div class="empty">加载失败</div>'; return; }
-        render(d);
+        if (!d.ok) { renderError('加载失败：' + (d.error || '未知错误')); return; }
+        renderHome(d);
     } catch (e) {
-        document.getElementById('dash').innerHTML = '<div class="empty">网络错误：' + e.message + '</div>';
+        renderError('网络错误：' + e.message);
     }
 }
 
-function render(d) {
-    const s = d.search;       // 检索统计
-    const sd = d.status_dist; // 文档状态分布
-    // 状态中文名映射
-    const statusName = {
-        uploaded: '已上传', parsing: '解析中', parsed: '已解析',
-        pending_review: '待审核', published: '已发布', rejected: '已退回', archived: '已下架',
-    };
-    const statusHtml = Object.keys(sd).length
-        ? Object.entries(sd).map(([k, v]) =>
-            `<div class="kv"><span>${statusName[k] || k}</span><b>${v}</b></div>`).join('')
-        : '<div class="kv">暂无数据</div>';
+// 一级分类编码 → 中文名 映射（由接口返回的 categories 构建）
+function buildCatMap(categories) {
+    const m = {};
+    (categories || []).forEach(c => { m[c.key] = c.name; });
+    return m;
+}
 
-    // 热门检索 Top10
-    const topHtml = (s.top_queries || []).slice(0, 10).map(q =>
-        `<li>${escapeHtml(q.query)} <span class="muted">×${q.count}</span></li>`).join('') || '<li class="muted">暂无</li>';
+// 把 ISO 时间截成 YYYY-MM-DD（最近更新展示用）
+function fmtDate(iso) {
+    if (!iso) return '';
+    return String(iso).slice(0, 10);
+}
 
-    // 知识缺口（零结果）Top10
-    const zeroHtml = (s.zero_queries || []).slice(0, 10).map(q =>
-        `<li>${escapeHtml(q.query)} <span class="muted">×${q.count}</span></li>`).join('') || '<li class="muted">暂无零结果</li>';
+// 跳转检索（带可选过滤条件）
+function goSearch(q, cat) {
+    const p = new URLSearchParams();
+    if (q) p.set('q', q);
+    if (cat) p.set('category_l1', cat);
+    window.location.href = '/search?' + p.toString();
+}
 
-    document.getElementById('dash').innerHTML = `
-        <div class="cards">
-            <div class="card"><div class="card-num">${d.doc_total}</div><div class="card-label">知识文档</div></div>
-            <div class="card"><div class="card-num">${d.chunk_total}</div><div class="card-label">知识片段</div></div>
-            <div class="card"><div class="card-num">${s.total_searches}</div><div class="card-label">近30天检索</div></div>
-            <div class="card"><div class="card-num">${s.zero_result_rate}%</div><div class="card-label">零结果率</div></div>
-            <div class="card"><div class="card-num">${s.avg_cost_ms}ms</div><div class="card-label">平均耗时</div></div>
-            <div class="card"><div class="card-num">${s.active_users}</div><div class="card-label">活跃用户</div></div>
+// 渲染错误态
+function renderError(msg) {
+    document.getElementById('kb').innerHTML = '<div class="empty">' + escapeHtml(msg) + '</div>';
+}
+
+// 主渲染
+function renderHome(d) {
+    const catMap = buildCatMap(d.categories);
+    const totalDocs = d.stats.doc_total || 0;
+    const totalChunks = d.stats.chunk_total || 0;
+
+    // ① 分类导航卡片
+    const catHtml = (d.categories || []).map(c => `
+        <div class="cat-card" onclick="goSearch('', '${c.key}')">
+            <div class="ico">${c.icon}</div>
+            <div class="name">${escapeHtml(c.name)}</div>
+            <div class="cnt">${c.count} 篇</div>
+        </div>`).join('') || '<div class="empty">暂无分类数据</div>';
+
+    // ② 最近更新列表
+    const recentHtml = (d.recent || []).map(it => {
+        const catName = catMap[it.category_l1] || it.category_l1 || '未分类';
+        const sec = (it.security_level === 'confidential') ? '机密'
+                  : (it.security_level === 'public' ? '公开' : '内部');
+        return `
+        <div class="feed-item">
+            <div class="feed-main">
+                <a class="feed-title" href="/doc/${it.id}">${escapeHtml(it.title)}</a>
+                <div class="feed-meta">
+                    <span>${escapeHtml(catName)}</span>
+                    <span>密级：${sec}</span>
+                    <span>更新：${fmtDate(it.updated_at)}</span>
+                    ${it.owner_name ? '<span>作者：' + escapeHtml(it.owner_name) + '</span>' : ''}
+                </div>
+            </div>
+            <span class="feed-cat">${escapeHtml(catName)}</span>
+        </div>`;
+    }).join('') || '<div class="empty">暂无已发布文档</div>';
+
+    // ③ 我的待办
+    const todoHtml = (d.todos || []).map(t => {
+        const ico = t.type === 'review' ? 'warn' : 'info';
+        const sym = t.type === 'review' ? '✅' : (t.type === 'mine' ? '📝' : '💡');
+        return `
+        <div class="todo-item" ${t.url ? `onclick="location.href='${t.url}'"` : ''} style="cursor:${t.url ? 'pointer' : 'default'}">
+            <div class="todo-ico ${ico}">${sym}</div>
+            <div class="todo-main">
+                <div class="todo-title">${escapeHtml(t.title)}</div>
+                <div class="todo-desc">${escapeHtml(t.desc)}</div>
+            </div>
+            <div class="todo-num">${t.count}</div>
+        </div>`;
+    }).join('') || '<div class="empty">暂无待办，保持节奏 👍</div>';
+
+    // ④ 热门检索
+    const hotHtml = (d.hot_queries || []).map(q => `
+        <span class="tag-chip" style="cursor:pointer" onclick="goSearch(${JSON.stringify(q.query).replace(/"/g, '&quot;')})">${escapeHtml(q.query)} <span class="muted">×${q.count}</span></span>
+    `).join('') || '<span class="muted">暂无检索记录</span>';
+
+    document.getElementById('kb').innerHTML = `
+        <!-- 顶部 Hero：欢迎语 + 全局搜索框 -->
+        <div class="kb-hero">
+            <div>
+                <div class="h-title">欢迎来到晓梦庄子 · 医药招采知识库</div>
+                <div class="h-sub">汇聚政策法规、项目经验与培训沉淀，检索与问答一站式直达</div>
+            </div>
+            <div class="h-search">
+                <input type="text" id="kbSearch" placeholder="检索政策、项目、产品、流程…" onkeydown="if(event.key==='Enter'){goSearch(this.value)}">
+                <button class="btn btn-primary" onclick="goSearch(document.getElementById('kbSearch').value)">检索</button>
+            </div>
         </div>
-        <div class="grid-2">
-            <div class="panel">
-                <h3>文档状态分布</h3>
-                <div class="kvs">${statusHtml}</div>
+
+        <!-- 统计概览 -->
+        <div class="cards">
+            <div class="card"><div class="card-num">${totalDocs}</div><div class="card-label">知识文档</div></div>
+            <div class="card"><div class="card-num">${totalChunks}</div><div class="card-label">知识片段</div></div>
+            <div class="card"><div class="card-num">${(d.categories||[]).length}</div><div class="card-label">知识分类</div></div>
+            <div class="card"><div class="card-num">${(d.todos||[]).length}</div><div class="card-label">我的待办</div></div>
+        </div>
+
+        <!-- 分类导航 -->
+        <div class="kb-section-title">按分类浏览</div>
+        <div class="cat-grid">${catHtml}</div>
+
+        <!-- 左右分栏：最近更新 + 我的待办/热门检索 -->
+        <div class="split-2" style="margin-top:22px">
+            <div>
+                <div class="kb-section-title">最近更新</div>
+                <div class="doc-feed">${recentHtml}</div>
             </div>
-            <div class="panel">
-                <h3>近30天检索趋势</h3>
-                <div class="trend">${(s.daily || []).map(p => `<span class="bar" style="height:${Math.max(4, p.count*4)}px" title="${p.day}: ${p.count}"></span>`).join('') || '<span class="muted">暂无</span>'}</div>
-            </div>
-            <div class="panel">
-                <h3>热门检索词 Top10</h3>
-                <ul class="rank-list">${topHtml}</ul>
-            </div>
-            <div class="panel">
-                <h3>知识缺口（零结果）Top10</h3>
-                <ul class="rank-list">${zeroHtml}</ul>
+            <div>
+                <div class="kb-section-title">我的待办</div>
+                <div class="todo-list">${todoHtml}</div>
+                <div class="kb-section-title" style="margin-top:22px">热门检索</div>
+                <div class="doc-tags">${hotHtml}</div>
             </div>
         </div>
     `;
 }
-loadDashboard();
+
+loadHome();
 </script>
 {% endblock %}

@@ -77,19 +77,41 @@ async function loadTags() {
 }
 loadTags();
 
+// 页面加载时若 URL 带了查询/分类参数（如从首页分类卡片跳入），自动预填并执行检索。
+// 这样"点分类卡片"能直接看到该分类的文档列表，而不是停在空白检索页（之前的主要痛点）。
+function initFromUrl() {
+    const p = new URLSearchParams(location.search);            // 解析当前 URL 查询串
+    const q = p.get('q'), cat = p.get('category_l1'),         // 搜索词 + 一级分类
+          sec = p.get('security_level'), tag = p.get('tag'),   // 密级 + 标签
+          dept = p.get('department_id');                       // 部门
+    if (q) document.getElementById('searchInput').value = q;   // 回填搜索框
+    if (cat) document.getElementById('filterCat').value = cat; // 回填分类下拉
+    if (sec) document.getElementById('filterSec').value = sec; // 回填密级下拉
+    if (tag) document.getElementById('filterTag').value = tag; // 回填标签下拉
+    if (dept) document.getElementById('filterDept').value = dept; // 回填部门下拉
+    // 只要带了任意过滤参数就自动检索一次，让用户进来就有内容
+    if (q || cat || sec || tag || dept) doSearch();
+}
+initFromUrl();   // 立即执行：处理从首页/导航带参跳转进来的场景
+
 // 执行检索
 async function doSearch() {
     const q = document.getElementById('searchInput').value.trim();
     const resultsEl = document.getElementById('results');
     const statsEl = document.getElementById('statsBar');
-    if (!q) { resultsEl.innerHTML = '<div class="empty">请输入检索词</div>'; return; }
-
-    // 组装查询字符串
-    const params = new URLSearchParams({q, mode: document.getElementById('modeSelect').value});
+    // 读取过滤条件（分类/密级/部门/标签），判断是否进入浏览模式
     const cat = document.getElementById('filterCat').value;
     const sec = document.getElementById('filterSec').value;
     const dept = document.getElementById('filterDept').value;
     const tag = document.getElementById('filterTag').value;
+    // 既无关键词、又无任何过滤才提示输入；带过滤则进入分类浏览（空查询合法）
+    if (!q && !cat && !sec && !tag && !dept) {
+        resultsEl.innerHTML = '<div class="empty">请输入检索词或选择分类</div>';
+        return;
+    }
+
+    // 组装查询字符串
+    const params = new URLSearchParams({q, mode: document.getElementById('modeSelect').value});
     if (cat) params.set('category_l1', cat);
     if (sec) params.set('security_level', sec);
     if (dept) params.set('department_id', dept);
@@ -101,7 +123,12 @@ async function doSearch() {
         const data = await resp.json();
         if (!data.ok) { resultsEl.innerHTML = '<div class="empty">检索失败</div>'; return; }
         const s = data.stats;
-        statsEl.textContent = `命中 ${s.total} 条 · 耗时 ${s.cost_ms}ms · BM25召回 ${s.bm25_count} · 向量召回 ${s.vector_count}`;
+        // 浏览模式（空查询+过滤）与检索模式的统计字段不同，避免显示 undefined
+        if (s.mode === 'browse') {
+            statsEl.textContent = `命中 ${s.total} 条 · 浏览模式`;
+        } else {
+            statsEl.textContent = `命中 ${s.total} 条 · 耗时 ${s.cost_ms || 0}ms · BM25召回 ${s.bm25_count || 0} · 向量召回 ${s.vector_count || 0}`;
+        }
         renderResults(data.results);
     } catch (ex) {
         resultsEl.innerHTML = '<div class="empty">网络错误：' + ex.message + '</div>';
@@ -120,7 +147,7 @@ function renderResults(results) {
                 <span class="badge">${r.category_name}</span>
                 <span class="badge">${r.quality_name}</span>
             </div>
-            <div class="result-meta">${r.department} · 责任人 ${r.owner || '—'} · 相关度 ${r.score}</div>
+            <div class="result-meta">${r.department} · 责任人 ${r.owner || '—'} · ${r.browse ? '📁 文档' : '相关度 ' + r.score}</div>
             <div class="result-body">${r.highlight || escapeHtml(r.content.slice(0, 200))}</div>
             <div class="result-path">${r.heading_path || ''}</div>
         </div>

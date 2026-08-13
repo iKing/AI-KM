@@ -29,6 +29,7 @@ venv/
 
 # ---- 测试产物 ----
 .pytest_cache/
+test_report_assets/
 
 # ---- 系统 / 编辑器 ----
 .DS_Store

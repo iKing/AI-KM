@@ -179,34 +179,95 @@ def api_change_password():
 # 二、检索接口
 # ============================================================
 
+def _browse_documents(user, filters: dict, top_k: int) -> list[dict]:
+    """分类浏览模式：查询词为空但带了分类/密级等过滤时，直接列出该范围内的文档。
+    返回格式与检索引擎结果对齐（字段一致），前端 renderResults 可无缝渲染。
+    按更新时间倒序，优先展示最新入库/修订的知识。"""
+    # 权限范围过滤（部门隔离 + 密级 + 发布状态），无权限文档不出现
+    scope_sql, params = auth.visibility_filter(user, "d")
+    conds = [scope_sql]
+    if filters.get("category_l1"):                       # 一级分类过滤
+        conds.append("d.category_l1 = ?"); params.append(filters["category_l1"])
+    if filters.get("category_l2"):                       # 二级分类过滤
+        conds.append("d.category_l2 = ?"); params.append(filters["category_l2"])
+    if filters.get("department_id"):                     # 部门过滤
+        conds.append("d.department_id = ?"); params.append(filters["department_id"])
+    if filters.get("security_level"):                    # 密级过滤
+        conds.append("d.security_level = ?"); params.append(filters["security_level"])
+    if filters.get("tag"):                               # 标签过滤（P1 标签体系）
+        conds.append("d.id IN (SELECT dt.doc_id FROM doc_tags dt JOIN tags t ON t.id = dt.tag_id WHERE t.name = ?)")
+        params.append(filters["tag"])
+    where = " AND ".join(conds)                          # 拼接完整 WHERE
+    rows = db.query(
+        f"""
+        SELECT d.id, d.title, d.category_l1, d.security_level, d.quality_level,
+               d.summary, d.owner, d.updated_at, d.effective_date,
+               COALESCE(dept.name, '') AS dept_name
+        FROM documents d
+        LEFT JOIN departments dept ON dept.id = d.department_id
+        WHERE {where}
+        ORDER BY d.updated_at DESC                       -- 最新文档靠前
+        LIMIT ?
+        """,
+        params + [top_k],
+    )
+    out = []                                             # 组装成前端结果格式
+    for r in rows:
+        out.append({
+            "doc_id": r["id"],                           # 文档 ID（跳转用）
+            "chunk_id": 0,                               # 0 表示浏览模式（非检索切片），前端据此区分展示
+            "title": r["title"],                         # 标题
+            "content": r["summary"] or "",               # 正文预览用摘要
+            "score": 1.0,                                # 浏览模式无相关度，占位 1.0
+            "category_l1": r["category_l1"],             # 一级分类编码
+            "category_name": config.CATEGORIES_L1.get(r["category_l1"], r["category_l1"]),
+            "security_level": r["security_level"],       # 密级
+            "security_name": config.SECURITY_LEVELS.get(r["security_level"], ""),
+            "quality_level": r["quality_level"],         # 质量等级
+            "quality_name": config.QUALITY_LEVELS.get(r["quality_level"], ""),
+            "department": r["dept_name"],                # 部门名
+            "owner": r["owner"] or "",                   # 责任人
+            "highlight": r["summary"] or "",             # 高亮片段用摘要
+            "anchor": "",                                # 浏览模式无锚点
+            "heading_path": "",                          # 无章节路径
+            "effective_date": r["effective_date"],       # 生效日期
+            "browse": True,                              # 标记浏览模式，前端区分展示
+        })
+    return out
+
+
 @bp.route("/api/search")
 @auth.login_required
 def api_search():
-    """知识检索：混合/关键词/语义三种模式，权限范围内召回。"""
+    """知识检索：混合/关键词/语义三种模式，权限范围内召回。
+    特殊：查询词为空但带了分类/密级等过滤条件时，进入"分类浏览"模式，
+    直接返回该范围内文档列表（按更新时间倒序），支撑首页分类卡片跳转 browse 场景。"""
     user = auth.current_user()  # 当前用户（决定可见范围）
     query = (request.args.get("q") or "").strip()  # 查询词
-    if not query:  # 空查询直接返回空
-        return jsonify({"ok": True, "results": [], "stats": {}})
 
-    # 解析过滤条件（前端筛选器传参）
+    # 解析过滤条件（检索与浏览模式共用）
     filters: dict = {}
     if request.args.get("category_l1"):
         filters["category_l1"] = request.args.get("category_l1")
     if request.args.get("category_l2"):
         filters["category_l2"] = request.args.get("category_l2")
     if request.args.get("department_id"):
-        filters["department_id"] = request.args.get("department_id")
+        filters["department_id"] = int(request.args.get("department_id"))
     if request.args.get("security_level"):
         filters["security_level"] = request.args.get("security_level")
     if request.args.get("tag"):  # 按标签过滤（P1 标签体系）
         filters["tag"] = request.args.get("tag")
-
-    mode = request.args.get("mode", "hybrid")  # 默认混合检索
     try:
         top_k = int(request.args.get("top_k", config.SEARCH_TOP_K))
     except ValueError:  # 非法数字兜底默认
         top_k = config.SEARCH_TOP_K
 
+    # 空查询 + 带过滤 = 分类浏览模式：直接列文档，不做语义检索
+    if not query:
+        rows = _browse_documents(user, filters, top_k)
+        return jsonify({"ok": True, "results": rows, "stats": {"mode": "browse", "total": len(rows)}})
+
+    mode = request.args.get("mode", "hybrid")  # 默认混合检索
     # 调用检索引擎。source="web" 用于区分统计来源
     results, stats = search.engine.search(
         query, user=user, filters=filters, top_k=top_k, mode=mode, source="web",
@@ -521,6 +582,92 @@ def api_dashboard():
         "doc_total": doc_total,
         "status_dist": status_dist,
         "chunk_total": chunk_total,
+    })
+
+
+@bp.route("/api/home")
+@auth.login_required
+def api_home():
+    """
+    知识库首页（专业工作台）聚合接口：一次调用返回工作台所需的全部数据。
+
+    返回：六大一级分类及其可见文档数、最近更新文档、我的待办、
+    热门检索词、统计概览。前端据此渲染类 BookStack 的企业知识库工作台，
+    避免首页加载时发起多次请求（N+1）。
+    """
+    user = auth.current_user()
+    # 统一权限过滤条件（数据层隔离，无权限文档查不出）
+    where_sql, params = auth.visibility_filter(user, "d")
+
+    # ① 六大一级分类 + 各分类可见文档数（用于分类导航入口）
+    cat_rows = db.query(
+        f"SELECT d.category_l1 AS c, COUNT(*) AS cn FROM documents d WHERE {where_sql} GROUP BY d.category_l1",
+        params,
+    )
+    cat_counts = {r["c"]: r["cn"] for r in cat_rows}
+    # 分类图标映射（前端卡片展示用，与 CATEGORIES_L1 顺序对齐）
+    cat_icons = {
+        "POLICY": "📜", "PROJECT": "🗂️", "CUSTOMER": "🤝",
+        "PRODUCT": "⚙️", "PROCESS": "📋", "TRAINING": "🎓",
+    }
+    categories = [
+        {"key": k, "name": v, "icon": cat_icons.get(k, "📁"), "count": cat_counts.get(k, 0)}
+        for k, v in config.CATEGORIES_L1.items()
+    ]
+
+    # ② 最近更新：可见范围内已发布文档，按更新时间倒序取前 8
+    recent_rows = db.query(
+        f"""
+        SELECT d.id, d.title, d.category_l1, d.security_level, d.updated_at, d.summary,
+               COALESCE(u.display_name, '') AS owner_name
+        FROM documents d
+        LEFT JOIN users u ON u.id = d.created_by
+        WHERE {where_sql} AND d.status = 'published'
+        ORDER BY d.updated_at DESC
+        LIMIT 8
+        """,
+        params,
+    )
+
+    # ③ 我的待办：按角色与创建人聚合（审核类 / 我待处理 / 知识缺口）
+    todos = []
+    # 待我审核：审核员与管理员可见的待审文档
+    if user["role"] in ("admin", "reviewer"):
+        pending = db.query_one(
+            f"SELECT COUNT(*) AS c FROM documents d WHERE {where_sql} AND d.status='pending_review'",
+            params,
+        )["c"]
+        if pending:
+            todos.append({"type": "review", "title": "待我审核", "desc": "有新的知识文档等待审核发布", "count": pending, "url": "/review"})
+    # 我创建的待发布 / 被退回
+    my_pending = db.query_one(
+        "SELECT COUNT(*) AS c FROM documents WHERE created_by=? AND status IN ('pending_review','rejected')",
+        (user["id"],),
+    )["c"]
+    if my_pending:
+        todos.append({"type": "mine", "title": "我待处理", "desc": "我提交的文档待审核或被退回", "count": my_pending, "url": "/spaces"})
+    # 知识缺口：近期零结果检索词数量，提示补充知识
+    search_stats = search.engine.search_stats(days=30)
+    zero_cnt = len(search_stats.get("zero_queries", []) or [])
+    if zero_cnt:
+        todos.append({"type": "gap", "title": "知识缺口待补", "desc": "近期有检索零结果，建议补充知识", "count": zero_cnt, "url": "/search"})
+
+    # ④ 热门检索 Top8
+    hot = (search_stats.get("top_queries", []) or [])[:8]
+
+    # ⑤ 统计概览：文档总量 + 知识片段总量
+    stats = {
+        "doc_total": db.query_one("SELECT COUNT(*) AS c FROM documents")["c"],
+        "chunk_total": db.query_one("SELECT COUNT(*) AS c FROM chunks")["c"],
+    }
+
+    return jsonify({
+        "ok": True,
+        "categories": categories,
+        "recent": db.rows_to_dicts(recent_rows),
+        "todos": todos,
+        "hot_queries": hot,
+        "stats": stats,
     })
 
 

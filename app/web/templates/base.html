@@ -27,7 +27,7 @@
             {% if user and user.role in ('admin','reviewer') %}
             <a class="nav-item" href="/review">✅ 知识审核</a>
             {% endif %}
-            <a class="nav-item" href="/dashboard">📊 效能看板</a>
+            <a class="nav-item" href="/dashboard">🏠 知识主页</a>
             {# 任意登录用户可访问「我的安全」（MFA 开通）、「修改密码」与「API 文档」 #}
             {% if user %}
             <a class="nav-item" href="/change-password">🔑 修改密码</a>
